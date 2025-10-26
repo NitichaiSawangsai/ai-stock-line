@@ -26,7 +26,7 @@ class StockNotificationApp {
   constructor() {
     this.isRunning = false;
     this.startTime = null;
-    this.timeout = 3 * 60 * 1000; // 5 minutes timeout
+    this.timeout = 20 * 60 * 1000; // 20 minutes timeout
     this.stockData = new StockDataService();
     this.newsAnalysis = new NewsAnalysisService();
     this.lineNotification = new LineOfficialAccountService();
@@ -35,7 +35,7 @@ class StockNotificationApp {
 
   async start() {
     const timeoutId = setTimeout(() => {
-      logger.error('⏰ Process timeout reached (30 minutes), forcing exit...');
+      logger.error('⏰ Process timeout reached (20 minutes), forcing exit...');
       process.exit(1);
     }, this.timeout);
 
@@ -91,6 +91,7 @@ class StockNotificationApp {
     
     try {
       // Load stock list from Stock Data Service
+      logger.info('📂 Loading stock list...');
       const stocks = await this.stockData.getStockList();
       
       if (!stocks || stocks.length === 0) {
@@ -101,18 +102,32 @@ class StockNotificationApp {
       logger.info(`📊 Found ${stocks.length} stocks to analyze`);
 
       // Check for high-risk stocks
+      logger.info('🚨 Analyzing high-risk stocks...');
       const highRiskStocks = await this.newsAnalysis.analyzeHighRiskStocks(stocks);
+      logger.info(`🚨 Found ${highRiskStocks.length} high-risk stocks`);
+      
       if (highRiskStocks.length > 0) {
+        logger.info('📤 Sending risk alert...');
         await this.lineNotification.sendRiskAlert(highRiskStocks);
+        logger.info('✅ Risk alert sent successfully');
+      } else {
+        logger.info('✅ No high-risk stocks to report');
       }
 
-      // Check for opportunities (only during morning hours)
+      // Check for opportunities - ลบเงื่อนไขเวลาออกเพื่อ test
       const currentHour = moment().tz('Asia/Bangkok').hour();
-      if (currentHour >= 5 && currentHour <= 7) {
-        const opportunities = await this.newsAnalysis.analyzeStockOpportunities(stocks);
-        if (opportunities.length > 0) {
-          await this.lineNotification.sendOpportunityAlert(opportunities);
-        }
+      logger.info(`🕰️ Current hour: ${currentHour} (Bangkok time)`);
+      
+      logger.info('🔥 Analyzing stock opportunities...');
+      const opportunities = await this.newsAnalysis.analyzeStockOpportunities(stocks);
+      logger.info(`🔥 Found ${opportunities.length} opportunities`);
+      
+      if (opportunities.length > 0) {
+        logger.info('📤 Sending opportunity alert...');
+        await this.lineNotification.sendOpportunityAlert(opportunities);
+        logger.info('✅ Opportunity alert sent successfully');
+      } else {
+        logger.info('✅ No opportunities to report');
       }
 
     } catch (error) {
