@@ -91,7 +91,7 @@ class LineNotificationService {
 
   async sendErrorNotification(error) {
     try {
-      const message = `🚨 [ระบบขัดข้อง] AI Stock Notification
+      const message = `🚨 [ระบบขัดข้อง] AOM Stock Notification
 
 ❌ เกิดข้อผิดพลาด: ${error.message}
 

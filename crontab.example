@@ -1,4 +1,4 @@
-# AI Stock Notification Crontab Example
+# AOM Stock Notification Crontab Example
 # Copy this to your crontab using: crontab -e
 # Replace /path/to/ai-stock with actual path
 

@@ -3,7 +3,7 @@ const GoogleDriveService = require('./services/googleDriveService');
 const NewsAnalysisService = require('./services/newsAnalysisService');
 
 async function testStockSystem() {
-  console.log('🚀 Testing AI Stock Notification System...\n');
+  console.log('🚀 Testing AOM Stock Notification System...\n');
   
   try {
     // Test Google Drive service

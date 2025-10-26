@@ -27,7 +27,7 @@ async function quickTest() {
   try {
     // Test 1: Stock Data Download
     console.log('1️⃣ Testing stock data download...');
-    const StockDataService = require('./services/stockDataService');
+    const StockDataService = require('./../services/stockDataService');
     const stockService = new StockDataService();
     
     const stocks = await Promise.race([

@@ -1,5 +1,5 @@
 require('dotenv').config();
-const LineOfficialAccountService = require('./services/lineOfficialAccountService');
+const LineOfficialAccountService = require('./../services/lineOfficialAccountService');
 
 async function testLineConnection() {
   console.log('🧪 เริ่มทดสอบ LINE Official Account...');
@@ -26,7 +26,7 @@ async function testLineConnection() {
     console.log('💬 ทดสอบส่งข้อความ...');
     const testMessage = `🤖 ทดสอบ LINE Official Account
 
-✅ ระบบ AI Stock Notification ทำงานได้ปกติแล้ว!
+✅ ระบบ AOM Stock Notification ทำงานได้ปกติแล้ว!
 
 📅 วันที่ทดสอบ: ${new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}
 

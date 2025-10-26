@@ -94,3 +94,6 @@ service-account-key.json
 
 # PM2
 ecosystem.config.js.backup
+
+
+test/data

@@ -30,7 +30,7 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    service: 'AI Stock Notification Webhook'
+    service: 'AOM Stock Notification Webhook'
   });
 });
 

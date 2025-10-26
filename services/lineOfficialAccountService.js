@@ -80,7 +80,7 @@ class LineOfficialAccountService {
 
   async sendErrorNotification(error) {
     try {
-      const message = `🚨 [ระบบขัดข้อง] AI Stock Notification
+      const message = `🚨 [ระบบขัดข้อง] AOM Stock Notification
 
 ❌ เกิดข้อผิดพลาด: ${error.message}
 
@@ -122,7 +122,7 @@ class LineOfficialAccountService {
       const stockDataService = new StockDataService();
       const stockContext = await stockDataService.getStockContext();
       
-      // Analyze with ChatGPT
+      // ลองใช้ ChatGPT ก่อน
       const NewsAnalysisService = require('./newsAnalysisService');
       const newsAnalysis = new NewsAnalysisService();
       
@@ -140,24 +140,59 @@ ${stockContext}
 
 หากคำถามไม่เกี่ยวกับการลงทุน ให้แจ้งว่าระบบนี้เฉพาะสำหรับการปรึกษาเรื่องหุ้นเท่านั้น`;
 
-      const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 800,
-        temperature: 0.7
-      }, {
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: this.timeout
-      });
+      // ตรวจสอบว่าควรใช้ ChatGPT หรือไม่
+      const shouldUseChatGPT = process.env.OPENAI_API_KEY && 
+                              process.env.OPENAI_API_KEY !== 'disabled' && 
+                              process.env.OPENAI_API_KEY !== 'sk-your-openai-api-key-here';
 
-      return response.data.choices[0].message.content;
+      if (!shouldUseChatGPT) {
+        logger.info('🆓 Using FREE Gemini AI for LINE chat response');
+        
+        // ใช้ Gemini ฟรีโดยตรง
+        const GeminiAnalysisService = require('./geminiAnalysisService');
+        const geminiService = new GeminiAnalysisService();
+        
+        const geminiResponse = await geminiService.callGeminiAPI(prompt);
+        
+        // ลบ markdown formatting ถ้ามี
+        return geminiResponse.replace(/```\w*\s*/g, '').replace(/```/g, '').trim();
+      }
+
+      // ลอง ChatGPT ก่อน (เฉพาะกรณีที่มี API key จริง)
+      try {
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+          model: "gpt-3.5-turbo",
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 800,
+          temperature: 0.7
+        }, {
+          headers: {
+            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: this.timeout
+        });
+
+        return response.data.choices[0].message.content;
+        
+      } catch (chatgptError) {
+        logger.warn(`⚠️ ChatGPT failed, switching to FREE Gemini: ${chatgptError.message}`);
+        
+        // สลับไปใช้ Gemini ฟรี
+        const GeminiAnalysisService = require('./geminiAnalysisService');
+        const geminiService = new GeminiAnalysisService();
+        
+        const geminiResponse = await geminiService.callGeminiAPI(prompt);
+        
+        // ลบ markdown formatting ถ้ามี
+        return geminiResponse.replace(/```\w*\s*/g, '').replace(/```/g, '').trim();
+      }
       
     } catch (error) {
-      logger.error(`❌ Failed to analyze user query: ${error.message}`);
-      return `ขออภัย ไม่สามารถวิเคราะห์คำถามได้ในขณะนี้ กรุณาลองใหม่อีกครั้งค่ะ
+      logger.error(`❌ Failed to analyze user query with both AI services: ${error.message}`);
+      return `ขออภัย ระบบ AI ทั้งหมดมีปัญหาในขณะนี้ กรุณาลองใหม่อีกครั้งค่ะ
+
+📞 หากเป็นเรื่องด่วน กรุณาติดตามข่าวสารด้วยตนเอง
 
 Error: ${error.message}`;
     }
@@ -179,17 +214,36 @@ ${emoji} ระดับความเสี่ยง: ${this.translateRiskLeve
 
 📈 แนวโน้ม: 🔻 ${risk.recommendation}`;
 
-    // Add news source if available
-    if (stock.news && stock.news.length > 0) {
-      const topNews = stock.news[0];
+    // แสดงภัยคุกคามถ้ามี
+    if (risk.threats && risk.threats.length > 0) {
       message += `
 
-🔗 แหล่งข่าว: ${topNews.source}`;
-      
-      if (topNews.url && topNews.url !== 'undefined') {
+⚠️ ภัยคุกคาม:`;
+      risk.threats.slice(0, 3).forEach((threat, index) => {
         message += `
-ลิงก์: ${topNews.url}`;
-      }
+${index + 1}. ${threat}`;
+      });
+    }
+
+    // แสดงแหล่งข่าวหลายอัน
+    if (stock.news && stock.news.length > 0) {
+      message += `
+
+📰 แหล่งข่าวที่เกี่ยวข้อง:`;
+      
+      stock.news.slice(0, 3).forEach((newsItem, index) => {
+        message += `
+
+🔗 ข่าวที่ ${index + 1}: ${newsItem.source}`;
+        if (newsItem.title) {
+          message += `
+หัวข้อ: ${newsItem.title.substring(0, 80)}${newsItem.title.length > 80 ? '...' : ''}`;
+        }
+        if (newsItem.url && newsItem.url !== 'undefined' && !newsItem.url.includes('mock') && !newsItem.url.includes('example')) {
+          message += `
+ลิงก์: ${newsItem.url}`;
+        }
+      });
     }
 
     message += `
@@ -222,17 +276,36 @@ ${emoji} ระดับโอกาส: ${this.translateOpportunityLevel(opport
 🎯 เป้าหมายราคา: ${opportunity.priceTarget}`;
     }
 
-    // Add news source if available
-    if (stock.news && stock.news.length > 0) {
-      const topNews = stock.news[0];
+    // แสดงปัจจัยบวกถ้ามี
+    if (opportunity.positiveFactors && opportunity.positiveFactors.length > 0) {
       message += `
 
-🔗 แหล่งข่าว: ${topNews.source}`;
-      
-      if (topNews.url && topNews.url !== 'undefined') {
+✅ ปัจจัยบวก:`;
+      opportunity.positiveFactors.slice(0, 3).forEach((factor, index) => {
         message += `
-ลิงก์: ${topNews.url}`;
-      }
+${index + 1}. ${factor}`;
+      });
+    }
+
+    // แสดงแหล่งข่าวหลายอัน
+    if (stock.news && stock.news.length > 0) {
+      message += `
+
+📰 แหล่งข่าวที่เกี่ยวข้อง:`;
+      
+      stock.news.slice(0, 3).forEach((newsItem, index) => {
+        message += `
+
+🔗 ข่าวที่ ${index + 1}: ${newsItem.source}`;
+        if (newsItem.title) {
+          message += `
+หัวข้อ: ${newsItem.title.substring(0, 80)}${newsItem.title.length > 80 ? '...' : ''}`;
+        }
+        if (newsItem.url && newsItem.url !== 'undefined' && !newsItem.url.includes('mock') && !newsItem.url.includes('example')) {
+          message += `
+ลิงก์: ${newsItem.url}`;
+        }
+      });
     }
 
     message += `
