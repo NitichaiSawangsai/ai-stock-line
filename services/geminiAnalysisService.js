@@ -1,5 +1,6 @@
 const axios = require('axios');
 const winston = require('winston');
+const CostTrackingService = require('./costTrackingService');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -18,78 +19,171 @@ class GeminiAnalysisService {
   constructor() {
     this.geminiApiKey = process.env.GEMINI_API_KEY || 'free'; // ใช้ฟรี
     this.baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
-    this.model = 'gemini-1.5-flash'; // ใช้ model ที่ stable กว่า
+    this.model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    this.maxRetries = parseInt(process.env.RETRY_MAX_ATTEMPTS) || 3;
+    this.retryDelay = parseInt(process.env.RETRY_DELAY_MS) || 2000;
+    this.backoffMultiplier = parseFloat(process.env.RETRY_BACKOFF_MULTIPLIER) || 2;
+    
+    // เพิ่ม Cost Tracking Service
+    this.costTracker = new CostTrackingService();
+  }
+
+
+
+
+
+  async withRetry(operation, operationName) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        const result = await operation();
+        if (attempt > 1) {
+          logger.info(`✅ ${operationName} succeeded on attempt ${attempt}`);
+        }
+        return result;
+      } catch (error) {
+        lastError = error;
+        
+        // For Gemini API calls, handle specific error types
+        if (operationName.includes('Gemini API call')) {
+          // Don't retry on auth errors
+          if (error.response?.status === 401 || error.response?.status === 403) {
+            logger.warn(`⚠️ ${operationName} failed with auth error: ${error.message}, will use fallback`);
+            throw error;
+          }
+          
+          // Don't retry on quota exceeded
+          if (error.response?.status === 429) {
+            logger.warn(`⚠️ ${operationName} failed with quota exceeded: ${error.message}`);
+            throw error;
+          }
+          
+          // Retry on server errors and response structure issues
+          if (error.response?.status >= 500 || error.message.includes('Invalid response structure')) {
+            logger.warn(`⚠️ ${operationName} failed with server error, will retry: ${error.message}`);
+            // Continue to retry logic
+          }
+        }
+        
+        // Don't retry on other API key errors
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          logger.error(`❌ ${operationName} failed with auth error: ${error.message}`);
+          throw error;
+        }
+        
+        if (attempt === this.maxRetries) {
+          logger.error(`❌ ${operationName} failed after ${this.maxRetries} attempts: ${error.message}`);
+          throw error;
+        }
+        
+        const delay = this.retryDelay * Math.pow(this.backoffMultiplier, attempt - 1);
+        logger.warn(`⚠️ ${operationName} failed (attempt ${attempt}/${this.maxRetries}): ${error.message}. Retrying in ${delay}ms...`);
+        
+        await this.delay(delay);
+      }
+    }
+    
+    throw lastError;
   }
 
   async testConnection() {
     try {
-      // ถ้าใช้โหมดฟรี ไม่ต้องทดสอบ API
+      // ถ้าไม่มี API key หรือเป็น 'free'
       if (!this.geminiApiKey || this.geminiApiKey === 'free') {
+        logger.info(`🆓 Using Gemini free mode with model: ${this.model}`);
         return true;
       }
 
-      // ทดสอบการเชื่อมต่อกับ Gemini API
-      const response = await axios.post(
-        `${this.baseUrl}/models/${this.model}:generateContent?key=${this.geminiApiKey}`,
-        {
-          contents: [{
-            parts: [{
-              text: "Test connection"
-            }]
+      // ทดสอบ Gemini API โดยตรง
+      const endpoint = `${this.baseUrl}/models/${this.model}:generateContent?key=${this.geminiApiKey}`;
+      
+      const response = await axios.post(endpoint, {
+        contents: [{
+          parts: [{
+            text: "สวัสดี"
           }]
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          timeout: 10000
+        }],
+        generationConfig: {
+          maxOutputTokens: 100, // เพิ่มขึ้นเล็กน้อยสำหรับ test
+          temperature: 0.1
         }
-      );
-      
-      logger.info('✅ Gemini AI connection successful');
-      return response.status === 200;
-      
+      }, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      if (response.data && response.data.candidates && response.data.candidates.length > 0) {
+        logger.info(`✅ Gemini API connection successful with model: ${this.model}`);
+        logger.info(`🤖 Test response: ${response.data.candidates[0].content.parts[0].text}`);
+        return true;
+      } else {
+        throw new Error('Invalid response from Gemini API');
+      }
+
     } catch (error) {
-      // ไม่แสดง error เพราะ mock responses ใช้งานได้ดี
+      logger.error(`❌ Gemini API test failed: ${error.message}`);
+      if (error.response?.status === 403) {
+        logger.error('🔑 API Key authentication failed - Check GEMINI_API_KEY');
+      }
+      logger.info(`🆓 Falling back to mock responses with model: ${this.model}`);
       return true;
     }
   }
 
   async analyzeRiskWithAI(stock, news) {
     try {
+      // ตรวจสอบว่าต้องใช้ Free Mode หรือไม่
+      const shouldUseFree = await this.costTracker.shouldUseFreeMode();
+      
+      if (shouldUseFree) {
+        logger.info(`🆓 Using FREE mode for risk analysis of ${stock.symbol}`);
+        return this.createFallbackRiskAnalysis(stock, "ใช้โหมดฟรี - ไม่มีการวิเคราะห์ AI");
+      }
+      
       const newsTexts = news.map(n => `${n.title}: ${n.description}`).join('\n\n');
       
-      const prompt = `วิเคราะห์ความเสี่ยงของหุ้น/สินทรัพย์ต่อไปนี้:
+      const prompt = `วิเคราะห์ความเสี่ยงหุ้น ${stock.symbol}:
 
-สินทรัพย์: ${stock.symbol} (${stock.type})
-จำนวนที่ลงทุน: ${stock.amount} ${stock.unit}
+ข่าว: ${newsTexts}
 
-ข่าวล่าสุด:
-${newsTexts}
-
-กรุณาวิเคราะห์และตอบในรูปแบบ JSON เท่านั้น (ไม่ต้องมี markdown code block):
+ตอบ JSON เท่านั้น:
 {
-  "isHighRisk": boolean (true ถ้ามีความเสี่ยงที่เงินจะหายหมดหรือหุ้นอาจปิดตัว),
-  "riskLevel": "low|medium|high|critical",
-  "summary": "สรุปสถานการณ์ในภาษาไทย",
-  "threats": ["รายการภัยคุกคาม"],
-  "confidenceScore": 0.0-1.0,
-  "recommendation": "คำแนะนำ",
-  "keyNews": "ข่าวสำคัญที่สุด",
-  "sourceUrl": "URL ของข่าวหลัก"
-}
+  "isHighRisk": false,
+  "riskLevel": "low",
+  "summary": "สรุป",
+  "threats": ["ภัยคุกคาม"],
+  "confidenceScore": 0.8,
+  "recommendation": "แนะนำ",
+  "keyNews": "ข่าวสำคัญ",
+  "sourceUrl": "url"
+}`;
 
-โปรดให้ความสำคัญกับ:
-1. ข่าวการล้มละลาย หรือปิดกิจการ
-2. การถูกแบนหรือห้ามส่งออก
-3. การฟ้องร้องครั้งใหญ่
-4. การเปลี่ยนแปลงกฎระเบียบที่รุนแรง
-5. วิกฤตการเงิน`;
-
-      const response = await this.callGeminiAPI(prompt);
+      logger.info(`🤖 Using Gemini API model: ${this.model}`);
+      
+      const response = await this.callGeminiAPI(prompt, 0, 1024);
+      
+      // Track API usage cost
+      const cost = this.costTracker.calculateApiCost('gemini', this.model);
+      await this.costTracker.trackApiUsage('gemini', this.model, cost);
       
       // ทำความสะอาด response และ parse JSON
-      let content = response;
+      let content = '';
+      
+      // ตรวจสอบและแปลง response เป็น string
+      if (typeof response === 'string') {
+        content = response;
+      } else if (response && typeof response === 'object') {
+        // If already parsed object
+        if (response.isHighRisk !== undefined) {
+          return response;
+        }
+        content = JSON.stringify(response);
+      } else {
+        throw new Error('Invalid response type from Gemini API');
+      }
       
       // ลบ markdown code blocks ถ้ามี
       content = content.replace(/```json\s*/gi, '').replace(/```\s*/gi, '');
@@ -97,10 +191,19 @@ ${newsTexts}
       // ลบ whitespace และ newlines ที่ไม่จำเป็น
       content = content.trim();
       
+      // พยายาม extract JSON จาก response หากมีข้อความแนบมา
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        content = jsonMatch[0];
+      }
+      
       try {
-        return JSON.parse(content);
+        const parsed = JSON.parse(content);
+        logger.info(`✅ Successfully parsed Gemini risk analysis for ${stock.symbol}`);
+        return parsed;
       } catch (parseError) {
-        logger.warn('⚠️ Failed to parse Gemini JSON response, using fallback');
+        // ลดการแสดงคำเตือนโดยใช้ debug level
+        logger.debug(`🔧 JSON parse failed for ${stock.symbol}, using fallback`);
         return this.createFallbackRiskAnalysis(stock, content);
       }
       
@@ -112,46 +215,72 @@ ${newsTexts}
 
   async analyzeOpportunityWithAI(stock, news) {
     try {
+      // ตรวจสอบว่าต้องใช้ Free Mode หรือไม่
+      const shouldUseFree = await this.costTracker.shouldUseFreeMode();
+      
+      if (shouldUseFree) {
+        logger.info(`🆓 Using FREE mode for opportunity analysis of ${stock.symbol}`);
+        return this.createFallbackOpportunityAnalysis(stock, "ใช้โหมดฟรี - ไม่มีการวิเคราะห์ AI");
+      }
+      
       const newsTexts = news.map(n => `${n.title}: ${n.description}`).join('\n\n');
       
-      const prompt = `วิเคราะห์โอกาสการลงทุนของหุ้น/สินทรัพย์ต่อไปนี้:
+      const prompt = `วิเคราะห์โอกาสหุ้น ${stock.symbol}:
 
-สินทรัพย์: ${stock.symbol} (${stock.type})
-จำนวนที่ลงทุน: ${stock.amount} ${stock.unit}
+ข่าว: ${newsTexts}
 
-ข่าวล่าสุด:
-${newsTexts}
-
-กรุณาวิเคราะห์และตอบในรูปแบบ JSON เท่านั้น (ไม่ต้องมี markdown code block):
+ตอบ JSON เท่านั้น:
 {
-  "isOpportunity": boolean (true ถ้ามีโอกาสราคาจะขึ้น),
-  "opportunityLevel": "low|medium|high|excellent",
-  "summary": "สรุปโอกาสในภาษาไทย",
+  "isOpportunity": false,
+  "opportunityLevel": "medium",
+  "summary": "สรุป",
   "positiveFactors": ["ปัจจัยบวก"],
-  "confidenceScore": 0.0-1.0,
-  "timeframe": "ระยะเวลาที่คาดว่าจะเห็นผล",
-  "priceTarget": "เป้าหมายราคาที่คาดหวัง",
-  "keyNews": "ข่าวดีที่สำคัญที่สุด",
-  "sourceUrl": "URL ของข่าวหลัก"
-}
+  "confidenceScore": 0.8,
+  "timeframe": "2-3 เดือน",
+  "priceTarget": "เป้าหมาย",
+  "keyNews": "ข่าวดี",
+  "sourceUrl": "url"
+}`;
 
-โปรดให้ความสำคัญกับ:
-1. การเปิดเผยกำไรที่ดีกว่าคาด
-2. ข่าวการเข้าซื้อกิจการหรือพันธมิตรใหม่
-3. การได้สัญญาใหญ่หรือลูกค้าใหม่
-4. นวัตกรรมหรือผลิตภัณฑ์ใหม่
-5. การเปลี่ยนแปลงนโยบายที่เป็นประโยชน์`;
+      logger.info(`🤖 Using Gemini API model: ${this.model}`);
 
-      const response = await this.callGeminiAPI(prompt);
+      const response = await this.callGeminiAPI(prompt, 0, 1024);
+      
+      // Track API usage cost
+      const cost = this.costTracker.calculateApiCost('gemini', this.model);
+      await this.costTracker.trackApiUsage('gemini', this.model, cost);
       
       // ทำความสะอาด response และ parse JSON
-      let content = response;
+      let content = '';
+      
+      // ตรวจสอบและแปลง response เป็น string
+      if (typeof response === 'string') {
+        content = response;
+      } else if (response && typeof response === 'object') {
+        // If already parsed object
+        if (response.isOpportunity !== undefined) {
+          return response;
+        }
+        content = JSON.stringify(response);
+      } else {
+        throw new Error('Invalid response type from Gemini API');
+      }
+      
       content = content.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
       
+      // พยายาม extract JSON จาก response หากมีข้อความแนบมา
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        content = jsonMatch[0];
+      }
+      
       try {
-        return JSON.parse(content);
+        const parsed = JSON.parse(content);
+        logger.info(`✅ Successfully parsed Gemini opportunity analysis for ${stock.symbol}`);
+        return parsed;
       } catch (parseError) {
-        logger.warn('⚠️ Failed to parse Gemini JSON response, using fallback');
+        // ลดการแสดงคำเตือนโดยใช้ debug level
+        logger.debug(`🔧 JSON parse failed for ${stock.symbol}, using fallback`);
         return this.createFallbackOpportunityAnalysis(stock, content);
       }
       
@@ -161,17 +290,19 @@ ${newsTexts}
     }
   }
 
-  async callGeminiAPI(prompt) {
+  async callGeminiAPI(prompt, retryCount = 0, maxTokens = 1024) {
     try {
-      // ถ้าไม่มี API key หรือใช้ฟรี ให้ใช้ mock response
-      if (!this.geminiApiKey || this.geminiApiKey === 'free') {
-        logger.info('🆓 Using Gemini free mock response');
-        return this.generateMockResponse(prompt);
-      }
+      return await this.withRetry(async () => {
+        // ถ้าไม่มี API key หรือใช้ฟรี ให้ใช้ mock response
+        if (!this.geminiApiKey || this.geminiApiKey === 'free') {
+          logger.info(`🆓 Using Gemini free mock response (model: ${this.model})`);
+          return this.generateMockResponse(prompt);
+        }
 
-      const response = await axios.post(
-        `${this.baseUrl}/models/${this.model}:generateContent?key=${this.geminiApiKey}`,
-        {
+        logger.info(`🤖 Using Gemini API model: ${this.model}`);
+        const endpoint = `${this.baseUrl}/models/${this.model}:generateContent?key=${this.geminiApiKey}`;
+        
+        const response = await axios.post(endpoint, {
           contents: [{
             parts: [{
               text: prompt
@@ -181,25 +312,64 @@ ${newsTexts}
             temperature: 0.3,
             topK: 40,
             topP: 0.95,
-            maxOutputTokens: 1024,
+            maxOutputTokens: Math.min(maxTokens, 1024), // Limit to prevent truncation
+            stopSequences: ["}"], // Stop at JSON end to prevent truncation
           }
-        },
-        {
+        }, {
           headers: {
             'Content-Type': 'application/json'
           },
-          timeout: 15000
-        }
-      );
+          timeout: 30000
+        });
 
-      if (response.data.candidates && response.data.candidates.length > 0) {
-        return response.data.candidates[0].content.parts[0].text;
-      }
-      
-      throw new Error('No response from Gemini API');
-      
+        if (!response.data.candidates || response.data.candidates.length === 0) {
+          throw new Error('No response from Gemini API');
+        }
+        
+        const candidate = response.data.candidates[0];
+        
+        // Check for content safety or blocking
+        if (candidate.finishReason === 'SAFETY' || candidate.finishReason === 'BLOCKED') {
+          throw new Error('Response blocked by safety filter');
+        }
+        
+        // Handle MAX_TOKENS case with enhanced handling
+        if (candidate.finishReason === 'MAX_TOKENS') {
+          logger.debug(`🔧 Response truncated, attempting to parse partial content`);
+          // Try to extract partial content if available
+          const partialContent = this.extractPartialContent(response.data);
+          if (partialContent) {
+            return this.parsePartialResponse(partialContent, retryCount);
+          }
+        }
+        
+        // Handle different response structures from Gemini 2.5
+        let text = '';
+        if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
+          text = candidate.content.parts[0].text;
+        } else if (candidate.content && typeof candidate.content === 'string') {
+          text = candidate.content;
+        } else if (candidate.text) {
+          text = candidate.text;
+        } else {
+          // Enhanced error handling - try simplified prompt before giving up
+          if (retryCount < 2) {
+            logger.debug(`🔧 Invalid response structure, trying simplified prompt`);
+            return this.callWithSimplifiedPrompt(prompt, retryCount + 1);
+          }
+          logger.error(`❌ Invalid response structure: content=${!!candidate.content}, parts=${!!candidate.content?.parts}, partsLength=${candidate.content?.parts?.length}`);
+          throw new Error('Invalid response structure from Gemini API');
+        }
+        
+        return text;
+      }, `Gemini API call (${this.model})`);
     } catch (error) {
-      // ไม่แสดง error เพราะ mock responses ใช้งานได้ดี
+      // If API call fails (including auth errors), fall back to mock response
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        logger.info(`🆓 Gemini API auth failed, using free mock response (model: ${this.model})`);
+      } else {
+        logger.warn(`⚠️ Gemini API call failed: ${error.message}, using mock response`);
+      }
       return this.generateMockResponse(prompt);
     }
   }
@@ -290,6 +460,83 @@ ${newsTexts}
 
   delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Extract partial content from truncated response
+  extractPartialContent(responseData) {
+    try {
+      if (responseData.candidates && responseData.candidates[0] && 
+          responseData.candidates[0].content && responseData.candidates[0].content.parts) {
+        const parts = responseData.candidates[0].content.parts;
+        if (parts.length > 0 && parts[0].text) {
+          return parts[0].text;
+        }
+      }
+    } catch (error) {
+      logger.warn(`⚠️ Failed to extract partial content: ${error.message}`);
+    }
+    return null;
+  }
+
+  // Parse partial response and create fallback
+  parsePartialResponse(partialContent, retryCount) {
+    logger.info(`🔄 Processing partial response (${partialContent.length} chars)`);
+    
+    // Try to extract JSON from partial content
+    try {
+      const jsonMatch = partialContent.match(/\{[\s\S]*\}/g);
+      if (jsonMatch && jsonMatch[0]) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        logger.info(`✅ Successfully parsed partial JSON response`);
+        return parsed;
+      }
+    } catch (error) {
+      // JSON parsing failed, create fallback
+    }
+    
+    // Create fallback response based on partial content
+    logger.debug(`🔧 Creating fallback response from partial content`);
+    return {
+      isHighRisk: false,
+      riskLevel: "unknown",
+      summary: "การวิเคราะห์ไม่สมบูรณ์เนื่องจากข้อจำกัดของโทเค็น",
+      threats: ["ข้อมูลไม่เพียงพอสำหรับการวิเคราะห์"],
+      confidenceScore: 0.3,
+      recommendation: "ควรวิเคราะห์เพิ่มเติม",
+      keyNews: "ข้อมูลไม่สมบูรณ์",
+      sourceUrl: "N/A",
+      _partial: true
+    };
+  }
+
+  // Call with simplified prompt when main prompt fails
+  async callWithSimplifiedPrompt(originalPrompt, retryCount) {
+    logger.info(`🔄 Trying simplified prompt (attempt ${retryCount})`);
+    
+    // Create a much shorter, focused prompt
+    const simplifiedPrompt = `วิเคราะห์ความเสี่ยงแบบสั้น:
+
+ตอบเฉพาะ JSON:
+{
+  "isHighRisk": boolean,
+  "riskLevel": "low|medium|high",
+  "summary": "สรุป 1 ประโยค",
+  "confidenceScore": 0.0-1.0
+}`;
+    
+    try {
+      return await this.callGeminiAPI(simplifiedPrompt, retryCount, 512); // Much smaller token limit
+    } catch (error) {
+      // Final fallback
+      logger.warn(`⚠️ Simplified prompt also failed, using emergency fallback`);
+      return {
+        isHighRisk: false,
+        riskLevel: "unknown",
+        summary: "ไม่สามารถวิเคราะห์ได้เนื่องจากข้อจำกัดทางเทคนิค",
+        confidenceScore: 0.2,
+        _fallback: true
+      };
+    }
   }
 }
 

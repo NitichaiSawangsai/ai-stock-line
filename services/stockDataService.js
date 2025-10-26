@@ -16,14 +16,45 @@ const logger = winston.createLogger({
 
 class StockDataService {
   constructor() {
-    this.stocksFileUrl = process.env.STOCKS_FILE_URL;
+    this.stocksFileUrl = process.env.STOCK_DATA_URL || process.env.STOCKS_FILE_URL;
     this.stocksContextUrl = process.env.STOCKS_CONTEXT_URL;
+    this.maxRetries = parseInt(process.env.RETRY_MAX_ATTEMPTS) || 3;
+    this.retryDelay = parseInt(process.env.RETRY_DELAY_MS) || 2000;
+    this.backoffMultiplier = parseFloat(process.env.RETRY_BACKOFF_MULTIPLIER) || 2;
+  }
+
+  async withRetry(operation, operationName) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        const result = await operation();
+        if (attempt > 1) {
+          logger.info(`✅ ${operationName} succeeded on attempt ${attempt}`);
+        }
+        return result;
+      } catch (error) {
+        lastError = error;
+        
+        if (attempt === this.maxRetries) {
+          logger.error(`❌ ${operationName} failed after ${this.maxRetries} attempts: ${error.message}`);
+          throw error;
+        }
+        
+        const delay = this.retryDelay * Math.pow(this.backoffMultiplier, attempt - 1);
+        logger.warn(`⚠️ ${operationName} failed (attempt ${attempt}/${this.maxRetries}): ${error.message}. Retrying in ${delay}ms...`);
+        
+        await this.delay(delay);
+      }
+    }
+    
+    throw lastError;
   }
 
   async testConnection() {
-    try {
+    return await this.withRetry(async () => {
       if (!this.stocksFileUrl) {
-        throw new Error('STOCKS_FILE_URL not configured');
+        throw new Error('STOCK_DATA_URL not configured');
       }
 
       const response = await axios.head(this.stocksFileUrl, { 
@@ -32,12 +63,14 @@ class StockDataService {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
       });
+      
+      if (response.status !== 200) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       logger.info('✅ Stock data URL connection successful');
-      return response.status === 200;
-    } catch (error) {
-      logger.error(`❌ Stock data connection test failed: ${error.message}`);
-      throw error;
-    }
+      return true;
+    }, 'Stock data connection test');
   }
 
   async getStockList() {
@@ -83,9 +116,9 @@ class StockDataService {
   }
 
   async downloadFileFromUrl(url) {
-    const timeout = 8000; // 8 seconds timeout
-    
-    try {
+    return await this.withRetry(async () => {
+      const timeout = 8000; // 8 seconds timeout
+      
       logger.info(`📥 Downloading from: ${url}`);
       
       const response = await axios.get(url, {
@@ -111,23 +144,7 @@ class StockDataService {
       
       logger.info(`✅ Successfully downloaded ${response.data.length} characters`);
       return response.data;
-      
-    } catch (error) {
-      logger.error(`❌ Download failed: ${error.message}`);
-      
-      // Don't try alternatives if it's a timeout or network error
-      if (error.code === 'ECONNABORTED' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
-        throw new Error(`Network error: ${error.message}`);
-      }
-      
-      // Try alternative Google Drive URL formats only for Google Drive links
-      if (url.includes('drive.google.com')) {
-        logger.info('🔄 Trying alternative Google Drive URLs...');
-        return await this.tryAlternativeGoogleDriveUrls(url);
-      }
-      
-      throw error;
-    }
+    }, `Download from ${url}`);
   }
 
   async tryAlternativeGoogleDriveUrls(originalUrl) {
@@ -287,6 +304,10 @@ class StockDataService {
       logger.error(`❌ File access validation failed for ${url}: ${error.message}`);
       return false;
     }
+  }
+
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 

@@ -21,6 +21,43 @@ class LineOfficialAccountService {
     this.userId = process.env.LINE_USER_ID;
     this.messagingApiUrl = 'https://api.line.me/v2/bot';
     this.timeout = 30000; // 30 seconds timeout
+    this.maxRetries = parseInt(process.env.RETRY_MAX_ATTEMPTS) || 3;
+    this.retryDelay = parseInt(process.env.RETRY_DELAY_MS) || 2000;
+    this.backoffMultiplier = parseFloat(process.env.RETRY_BACKOFF_MULTIPLIER) || 2;
+  }
+
+  async withRetry(operation, operationName) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        const result = await operation();
+        if (attempt > 1) {
+          logger.info(`✅ ${operationName} succeeded on attempt ${attempt}`);
+        }
+        return result;
+      } catch (error) {
+        lastError = error;
+        
+        // Don't retry on authentication errors
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          logger.error(`❌ ${operationName} failed with auth error: ${error.message}`);
+          throw error;
+        }
+        
+        if (attempt === this.maxRetries) {
+          logger.error(`❌ ${operationName} failed after ${this.maxRetries} attempts: ${error.message}`);
+          throw error;
+        }
+        
+        const delay = this.retryDelay * Math.pow(this.backoffMultiplier, attempt - 1);
+        logger.warn(`⚠️ ${operationName} failed (attempt ${attempt}/${this.maxRetries}): ${error.message}. Retrying in ${delay}ms...`);
+        
+        await this.delay(delay);
+      }
+    }
+    
+    throw lastError;
   }
 
   async testConnection() {
@@ -28,7 +65,7 @@ class LineOfficialAccountService {
       throw new Error('LINE Channel Access Token not configured');
     }
     
-    try {
+    return await this.withRetry(async () => {
       const response = await axios.get(`${this.messagingApiUrl}/info`, {
         headers: {
           'Authorization': `Bearer ${this.channelAccessToken}`
@@ -36,12 +73,13 @@ class LineOfficialAccountService {
         timeout: this.timeout
       });
       
+      if (response.status !== 200) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       logger.info('✅ LINE Official Account connection successful');
-      return response.status === 200;
-    } catch (error) {
-      logger.error(`❌ LINE connection test failed: ${error.message}`);
-      throw error;
-    }
+      return true;
+    }, 'LINE connection test');
   }
 
   async sendRiskAlert(highRiskStocks) {
@@ -320,7 +358,7 @@ ${index + 1}. ${factor}`;
       throw new Error('LINE User ID not configured');
     }
 
-    try {
+    return await this.withRetry(async () => {
       const response = await axios.post(`${this.messagingApiUrl}/message/push`, {
         to: this.userId,
         messages: [{
@@ -335,17 +373,17 @@ ${index + 1}. ${factor}`;
         timeout: this.timeout
       });
       
+      if (response.status !== 200) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       logger.info(`✅ LINE message sent successfully`);
       return response.data;
-      
-    } catch (error) {
-      logger.error(`❌ Failed to send LINE message: ${error.message}`);
-      throw error;
-    }
+    }, 'LINE push message');
   }
 
   async replyToUser(replyToken, message) {
-    try {
+    return await this.withRetry(async () => {
       const response = await axios.post(`${this.messagingApiUrl}/message/reply`, {
         replyToken: replyToken,
         messages: [{
@@ -360,13 +398,13 @@ ${index + 1}. ${factor}`;
         timeout: this.timeout
       });
       
+      if (response.status !== 200) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       logger.info(`✅ Reply sent successfully`);
       return response.data;
-      
-    } catch (error) {
-      logger.error(`❌ Failed to reply to user: ${error.message}`);
-      throw error;
-    }
+    }, 'LINE reply message');
   }
 
   getRiskEmoji(riskLevel) {

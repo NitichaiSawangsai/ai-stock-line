@@ -26,7 +26,7 @@ class StockNotificationApp {
   constructor() {
     this.isRunning = false;
     this.startTime = null;
-    this.timeout = 30 * 60 * 1000; // 30 minutes timeout
+    this.timeout = 3 * 60 * 1000; // 5 minutes timeout
     this.stockData = new StockDataService();
     this.newsAnalysis = new NewsAnalysisService();
     this.lineNotification = new LineOfficialAccountService();
@@ -188,18 +188,8 @@ class StockNotificationApp {
       hasErrors = true;
     }
     
-    // Test ChatGPT API with timeout (non-blocking in dev mode)
-    try {
-      await Promise.race([
-        this.newsAnalysis.testConnection(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('ChatGPT test timeout')), 10000))
-      ]);
-      logger.info('✅ ChatGPT API service OK');
-    } catch (error) {
-      logger.error(`❌ ChatGPT API service failed: ${error.message}`);
-      logger.warn('⚠️ Continuing without ChatGPT for development mode...');
-      // Don't throw error in dev mode for ChatGPT failures
-    }
+    // Test AI Services with detailed status
+    await this.testAIServices();
     
     // Test LINE notification with timeout
     try {
@@ -213,9 +203,124 @@ class StockNotificationApp {
       hasErrors = true;
     }
     
-    // Only throw error if critical services failed (not ChatGPT in dev mode)
+    // Only throw error if critical services failed (not AI in dev mode)
     if (hasErrors) {
       throw new Error('Critical services failed');
+    }
+  }
+
+  async testAIServices() {
+    logger.info('🤖 Testing AI Services...');
+    
+    // Check AI configuration
+    const openaiKey = process.env.OPENAI_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY;
+    const openaiModel = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+    const geminiModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    
+    logger.info('📋 AI Configuration:');
+    logger.info(`   OpenAI Key: ${openaiKey === 'disabled' ? '🔴 DISABLED' : openaiKey ? '🟢 CONFIGURED' : '🟡 NOT SET'}`);
+    logger.info(`   OpenAI Model: ${openaiModel}`);
+    logger.info(`   Gemini Key: ${geminiKey === 'free' ? '🆓 FREE MODE' : geminiKey ? '🟢 CONFIGURED' : '🟡 NOT SET'}`);
+    logger.info(`   Gemini Model: ${geminiModel}`);
+    
+    // Test OpenAI/ChatGPT
+    if (openaiKey && openaiKey !== 'disabled') {
+      try {
+        logger.info('🧪 Testing OpenAI ChatGPT connection...');
+        const testResult = await Promise.race([
+          this.newsAnalysis.testOpenAIConnection(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('OpenAI test timeout')), 15000))
+        ]);
+        
+        if (testResult) {
+          logger.info(`✅ OpenAI ChatGPT (${openaiModel}) - CONNECTED`);
+        } else {
+          logger.warn(`⚠️ OpenAI ChatGPT (${openaiModel}) - CONNECTION FAILED`);
+        }
+      } catch (error) {
+        logger.error(`❌ OpenAI ChatGPT (${openaiModel}) - ERROR: ${error.message}`);
+        if (error.message.includes('401')) {
+          logger.error('   🔑 Authentication failed - Check API key');
+        } else if (error.message.includes('429')) {
+          logger.error('   ⏱️ Rate limit exceeded - Wait and try again');
+        } else if (error.message.includes('timeout')) {
+          logger.error('   ⏰ Connection timeout - Network issue');
+        }
+      }
+    } else {
+      logger.warn(`⚠️ OpenAI ChatGPT - DISABLED (Using Gemini fallback)`);
+    }
+    
+    // Test Gemini
+    try {
+      logger.info('🧪 Testing Google Gemini connection...');
+      const GeminiAnalysisService = require('./services/geminiAnalysisService');
+      const geminiService = new GeminiAnalysisService();
+      
+      const testResult = await Promise.race([
+        geminiService.testConnection(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini test timeout')), 15000))
+      ]);
+      
+      if (testResult) {
+        if (geminiKey === 'free') {
+          logger.info(`✅ Google Gemini (${geminiModel}) - FREE MODE (Mock responses)`);
+        } else {
+          logger.info(`✅ Google Gemini (${geminiModel}) - CONNECTED`);
+        }
+      } else {
+        logger.warn(`⚠️ Google Gemini (${geminiModel}) - CONNECTION FAILED`);
+      }
+      
+      // Test actual AI analysis
+      try {
+        logger.info('🧠 Testing AI analysis capability...');
+        const testStock = { symbol: 'APPLE', type: 'หุ้น', amount: 100, unit: 'หุ้น' };
+        const testNews = [{ title: 'Apple quarterly earnings', description: 'Strong financial performance reported' }];
+        
+        const analysisStart = Date.now();
+        const riskResult = await geminiService.analyzeRiskWithAI(testStock, testNews);
+        const analysisTime = Date.now() - analysisStart;
+        
+        logger.info(`✅ AI Analysis test completed in ${analysisTime}ms`);
+        logger.info(`   Risk Level: ${riskResult.riskLevel}`);
+        logger.info(`   Confidence: ${(riskResult.confidenceScore * 100).toFixed(1)}%`);
+        
+      } catch (analysisError) {
+        logger.error(`❌ AI Analysis test failed: ${analysisError.message}`);
+        if (analysisError.message.includes('404')) {
+          logger.error('   🚫 Model not found - Check model name');
+        } else if (analysisError.message.includes('403')) {
+          logger.error('   🔑 Permission denied - Check API key permissions');
+        }
+      }
+      
+    } catch (error) {
+      logger.error(`❌ Google Gemini (${geminiModel}) - ERROR: ${error.message}`);
+      if (error.message.includes('401')) {
+        logger.error('   🔑 Authentication failed - Check API key');
+      } else if (error.message.includes('429')) {
+        logger.error('   ⏱️ Rate limit exceeded - Wait and try again');
+      } else if (error.message.includes('timeout')) {
+        logger.error('   ⏰ Connection timeout - Network issue');
+      }
+    }
+    
+    // Test News Analysis service overall
+    try {
+      const connectionResult = await Promise.race([
+        this.newsAnalysis.testConnection(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('News analysis test timeout')), 10000))
+      ]);
+      
+      if (connectionResult) {
+        logger.info('✅ News Analysis service OK (with AI fallback)');
+      } else {
+        logger.warn('⚠️ News Analysis service degraded (fallback mode)');
+      }
+    } catch (error) {
+      logger.error(`❌ News Analysis service failed: ${error.message}`);
     }
   }
 

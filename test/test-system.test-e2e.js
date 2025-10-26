@@ -1,6 +1,6 @@
 require('dotenv').config();
-const GoogleDriveService = require('./services/googleDriveService');
-const NewsAnalysisService = require('./services/newsAnalysisService');
+const GoogleDriveService = require('./../services/googleDriveService');
+const NewsAnalysisService = require('./../services/newsAnalysisService');
 
 async function testStockSystem() {
   console.log('🚀 Testing AOM Stock Notification System...\n');
