@@ -233,30 +233,69 @@ class ReliableDataService {
 
     for (const query of searchQueries) {
       try {
-        // RSS Feeds จากแหล่งที่เชื่อถือได้
+        // RSS Feeds จากแหล่งที่เชื่อถือได้ - เรียกทีละตัวเพื่อหลีกเลี่ยง rate limit
         const newsPromises = [
-          this.getBloombergNews(query),
-          this.getReutersNews(query), 
-          this.getMarketWatchNews(query),
-          this.getCNBCNews(query),
+          this.getReutersNews(query),
           this.getYahooFinanceNews(query)
         ];
 
-        const newsResults = await Promise.allSettled(newsPromises);
-        
-        newsResults.forEach(result => {
-          if (result.status === 'fulfilled' && result.value) {
-            const allNews = result.value;
-            
-            // แยกข่าวตามวันที่
-            const todayNews = this.filterNewsByDate(allNews, dateRanges.today);
-            const yesterdayNews = this.filterNewsByDate(allNews, dateRanges.yesterday);
-            
-            newsData.today.push(...todayNews);
-            newsData.yesterday.push(...yesterdayNews);
-            newsData.combined.push(...allNews);
+        // เรียกทีละตัวพร้อม delay
+        for (let i = 0; i < newsPromises.length; i++) {
+          if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000)); // delay 1 วินาที
           }
-        });
+          
+          try {
+            const result = await newsPromises[i];
+            if (result && result.length > 0) {
+              // แยกข่าวตามวันที่
+              const allNews = result;
+              const todayNews = this.filterNewsByDate(allNews, dateRanges.today);
+              const yesterdayNews = this.filterNewsByDate(allNews, dateRanges.yesterday);
+              
+              newsData.today.push(...todayNews);
+              newsData.yesterday.push(...yesterdayNews);
+              newsData.combined.push(...allNews);
+            }
+          } catch (sourceError) {
+            logger.debug(`🔧 News source failed: ${sourceError.message}`);
+          }
+        }
+        
+        // เพิ่ม fallback sources ถ้าข่าวไม่พอ
+        if (newsData.combined.length < 5) {
+          await new Promise(resolve => setTimeout(resolve, 1500)); // delay ก่อน fallback
+          
+          try {
+            const fallbackNews1 = await this.getMarketWatchNews(query);
+            if (fallbackNews1 && fallbackNews1.length > 0) {
+              const todayNews = this.filterNewsByDate(fallbackNews1, dateRanges.today);
+              const yesterdayNews = this.filterNewsByDate(fallbackNews1, dateRanges.yesterday);
+              
+              newsData.today.push(...todayNews);
+              newsData.yesterday.push(...yesterdayNews);
+              newsData.combined.push(...fallbackNews1);
+            }
+          } catch (fallbackError) {
+            logger.debug(`🔧 Fallback news source 1 failed: ${fallbackError.message}`);
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 1000)); // delay ระหว่าง fallback sources
+          
+          try {
+            const fallbackNews2 = await this.getCNBCNews(query);
+            if (fallbackNews2 && fallbackNews2.length > 0) {
+              const todayNews = this.filterNewsByDate(fallbackNews2, dateRanges.today);
+              const yesterdayNews = this.filterNewsByDate(fallbackNews2, dateRanges.yesterday);
+              
+              newsData.today.push(...todayNews);
+              newsData.yesterday.push(...yesterdayNews);
+              newsData.combined.push(...fallbackNews2);
+            }
+          } catch (fallbackError) {
+            logger.debug(`🔧 Fallback news source 2 failed: ${fallbackError.message}`);
+          }
+        }
 
       } catch (error) {
         logger.debug(`🔧 News gathering failed for query "${query}": ${error.message}`);
@@ -274,7 +313,7 @@ class ReliableDataService {
     newsData.yesterday = newsData.yesterday.slice(0, maxNewsPerDay);
     newsData.combined = newsData.combined.slice(0, maxNewsPerDay * 2);
     
-    logger.info(`� News summary: Today ${newsData.today.length}, Yesterday ${newsData.yesterday.length}, Total ${newsData.combined.length} (Thailand timezone)`);
+    logger.info(`📰 News summary: Today ${newsData.today.length}, Yesterday ${newsData.yesterday.length}, Total ${newsData.combined.length} (Thailand timezone)`);
     
     return newsData;
   }
@@ -460,25 +499,26 @@ class ReliableDataService {
       // Use alternative reliable news sources with Reuters-like quality
       const alternativeSources = [
         'https://feeds.feedburner.com/reuters/businessNews',
-        'https://rss.cnn.com/rss/money_latest.rss',
         'https://feeds.a.dj.com/rss/RSSMarketsMain.xml', // Wall Street Journal
         'https://www.cnbc.com/id/100003114/device/rss/rss.html',
-        'https://feeds.bbci.co.uk/news/business/rss.xml'
+        'https://feeds.bbci.co.uk/news/business/rss.xml',
+        'https://rss.cnn.com/rss/money_latest.rss' // CNN moved to last position due to connection issues
       ];
       
       for (const rssUrl of alternativeSources) {
         try {
           logger.info(`🔍 Trying alternative news source: ${rssUrl}`);
           
-          // Try direct RSS feed first with enhanced headers
+          // Try direct RSS feed first with enhanced headers and shorter timeout
           const directResponse = await axios.get(rssUrl, {
-            timeout: 10000,
+            timeout: 5000, // Reduced from 10000 to 5000ms
             headers: {
               'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
               'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml, */*',
               'Accept-Language': 'en-US,en;q=0.9',
               'Cache-Control': 'no-cache'
-            }
+            },
+            maxRedirects: 3 // Limit redirects
           });
           
           if (directResponse.data && (directResponse.data.includes('<item>') || directResponse.data.includes('<entry>'))) {
@@ -490,13 +530,20 @@ class ReliableDataService {
             }
           }
         } catch (directError) {
+          // Skip CNN RSS if it's causing persistent connection issues
+          if (rssUrl.includes('cnn.com') && (directError.code === 'ECONNRESET' || directError.message.includes('socket disconnected'))) {
+            logger.info(`⏭️ Skipping CNN RSS due to persistent connection issues`);
+            continue; // Skip to next source
+          }
+          
           logger.info(`❌ Direct RSS failed for ${rssUrl}: ${directError.message}`);
           
-          // Try RSS2JSON as fallback
-          try {
-            const response = await axios.get(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=10`, {
-              timeout: 10000
-            });
+          // Try RSS2JSON as fallback only for non-problematic sources
+          if (!rssUrl.includes('cnn.com')) {
+            try {
+              const response = await axios.get(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=10`, {
+                timeout: 5000 // Reduced timeout
+              });
             
             if (response.data && response.data.items && response.data.items.length > 0) {
               const filteredItems = response.data.items
@@ -524,9 +571,9 @@ class ReliableDataService {
                 return filteredItems;
               }
             }
-          } catch (rss2jsonError) {
-            logger.info(`❌ RSS2JSON failed for ${rssUrl}: ${rss2jsonError.message}`);
-            continue; // Try next RSS source
+            } catch (rss2jsonError) {
+              logger.info(`❌ RSS2JSON failed for ${rssUrl}: ${rss2jsonError.message}`);
+            }
           }
         }
       }

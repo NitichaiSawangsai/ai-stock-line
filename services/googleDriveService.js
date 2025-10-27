@@ -224,30 +224,30 @@ class GoogleDriveService {
       {
         type: 'หุ้น',
         symbol: 'VOO',
-        amount: 0.00394415,
+        amount: 200,
         unit: 'shares',
-        originalLine: 'หุ้น VOO 0.00394415'
+        originalLine: 'หุ้น VOO 200'
       },
       {
         type: 'ทอง',
         symbol: 'ทอง',
-        amount: 1,
+        amount: 10,
         unit: 'บาท',
-        originalLine: 'ทอง ทอง 1 บาท'
+        originalLine: 'ทอง ทอง 10 บาท'
       },
       {
         type: 'สกุลเงิน',
         symbol: 'USD',
-        amount: 100,
+        amount: 1000,
         unit: 'usd',
-        originalLine: 'สกุลเงิน USD 100 usd'
+        originalLine: 'สกุลเงิน USD 1000 usd'
       },
       {
         type: 'สกุลเงินคริปโต',
         symbol: 'BTC',
-        amount: 1,
+        amount: 10,
         unit: 'btc',
-        originalLine: 'สกุลเงินคริปโต BTC 1 btc'
+        originalLine: 'สกุลเงินคริปโต BTC 10 btc'
       },
       {
         type: 'หุ้น',

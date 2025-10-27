@@ -3,6 +3,7 @@ const winston = require('winston');
 const GeminiAnalysisService = require('./geminiAnalysisService');
 const ReliableDataService = require('./reliableDataService');
 const PriceConversionService = require('./priceConversionService');
+const CostTrackingService = require('./costTrackingService');
 
 const logger = winston.createLogger({
   level: 'info',
@@ -29,10 +30,15 @@ class NewsAnalysisService {
     this.geminiService = new GeminiAnalysisService();
     this.reliableDataService = new ReliableDataService(providedLogger || logger);
     this.priceService = new PriceConversionService(); // เพิ่ม Price Service
+    this.costTracker = new CostTrackingService(); // เพิ่ม Cost Tracking
     this.usingFallback = false;
     this.maxRetries = parseInt(process.env.RETRY_MAX_ATTEMPTS) || 3;
     this.retryDelay = parseInt(process.env.RETRY_DELAY_MS) || 2000;
     this.backoffMultiplier = parseFloat(process.env.RETRY_BACKOFF_MULTIPLIER) || 2;
+    
+    // Token limits และ budget management
+    this.tokenLimits = null;
+    this.budgetExceeded = false;
   }
 
   async withRetry(operation, operationName) {
@@ -73,6 +79,187 @@ class NewsAnalysisService {
     }
     
     throw lastError;
+  }
+
+  // ฟังก์ชันจัดการ chunked processing สำหรับ input ที่ใหญ่
+  async processLargeInput(prompt, provider = 'openai', model = null) {
+    try {
+      // โหลด token limits
+      if (!this.tokenLimits) {
+        this.tokenLimits = await this.costTracker.getModelTokenLimits();
+      }
+
+      const currentModel = model || (provider === 'openai' ? this.openaiModel : 'gemini-1.5-flash');
+      const limits = this.tokenLimits[provider]?.[currentModel];
+      
+      if (!limits) {
+        logger.warn(`⚠️ No token limits found for ${provider}/${currentModel}, using defaults`);
+        return await this.callSingleAPI(prompt, provider, currentModel);
+      }
+
+      // ประมาณ tokens และตรวจสอบว่าต้อง chunk หรือไม่
+      const estimatedTokens = this.costTracker.estimateTokenCount(prompt);
+      const maxInputTokens = Math.floor(limits.context * 0.7); // ใช้ 70% ของ context สำหรับ input
+      
+      logger.info(`📏 Token analysis: ${estimatedTokens} estimated, max ${maxInputTokens} for ${provider}/${currentModel}`);
+      
+      if (estimatedTokens <= maxInputTokens) {
+        // ไม่ต้อง chunk
+        return await this.callSingleAPI(prompt, provider, currentModel);
+      }
+
+      // ต้อง chunk
+      logger.info(`🔄 Large input detected, chunking for ${provider}/${currentModel}...`);
+      const chunks = this.costTracker.chunkTextByTokens(prompt, maxInputTokens);
+      logger.info(`📦 Split into ${chunks.length} chunks`);
+
+      const responses = [];
+      for (let i = 0; i < chunks.length; i++) {
+        logger.info(`🔍 Processing chunk ${i + 1}/${chunks.length}`);
+        
+        try {
+          const chunkResponse = await this.callSingleAPI(chunks[i], provider, currentModel);
+          responses.push(chunkResponse);
+          
+          // เพิ่ม delay ระหว่าง chunks เพื่อหลีกเลี่ยง rate limits
+          if (i < chunks.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        } catch (chunkError) {
+          logger.error(`❌ Chunk ${i + 1} failed: ${chunkError.message}`);
+          // ลองใช้ fallback model สำหรับ chunk นี้
+          try {
+            const fallbackResponse = await this.callSingleAPI(chunks[i], 'google', 'gemini-1.5-flash');
+            responses.push(fallbackResponse);
+          } catch (fallbackError) {
+            logger.error(`❌ Fallback also failed for chunk ${i + 1}`);
+            responses.push({ error: `Failed to process chunk ${i + 1}` });
+          }
+        }
+      }
+
+      // รวม responses
+      return this.combineChunkedResponses(responses);
+
+    } catch (error) {
+      logger.error(`❌ Error in processLargeInput: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // เรียก API เดี่ยว
+  async callSingleAPI(prompt, provider, model) {
+    // ตรวจสอบงบประมาณก่อน
+    await this.checkBudgetBeforeAPI();
+    
+    if (provider === 'openai' && !this.budgetExceeded) {
+      return await this.callOpenAI(prompt, model);
+    } else {
+      return await this.geminiService.analyzeWithPrompt(prompt);
+    }
+  }
+
+  // เรียก OpenAI API
+  async callOpenAI(prompt, model) {
+    const response = await axios.post(`${this.baseUrl}/chat/completions`, {
+      model: model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1500,
+      temperature: 0.3
+    }, {
+      headers: {
+        'Authorization': `Bearer ${this.openaiApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 20000
+    });
+
+    // ติดตามค่าใช้จ่าย
+    if (response.data.usage) {
+      await this.costTracker.trackAPIUsage(
+        'openai',
+        model,
+        response.data.usage.prompt_tokens || 0,
+        response.data.usage.completion_tokens || 0
+      );
+    }
+
+    return JSON.parse(response.data.choices[0].message.content);
+  }
+
+  // รวมผลลัพธ์จาก chunks
+  combineChunkedResponses(responses) {
+    const validResponses = responses.filter(r => r && !r.error);
+    
+    if (validResponses.length === 0) {
+      throw new Error('All chunks failed to process');
+    }
+
+    if (validResponses.length === 1) {
+      return validResponses[0];
+    }
+
+    // รวม responses โดยใช้ข้อมูลจาก response แรกเป็นหลัก และเพิ่ม summary
+    const combined = { ...validResponses[0] };
+    
+    // รวม summaries หากมี
+    if (combined.summary && validResponses.length > 1) {
+      const allSummaries = validResponses.map(r => r.summary).filter(Boolean);
+      combined.summary = allSummaries.join(' ');
+    }
+
+    // รวม keyNews หากมี
+    if (combined.keyNews && validResponses.length > 1) {
+      const allKeyNews = validResponses.map(r => r.keyNews).filter(Boolean);
+      combined.keyNews = allKeyNews.join(' ');
+    }
+
+    // เพิ่มหมายเหตุว่าเป็นผลจาก chunked processing
+    combined.processingNote = `Combined from ${validResponses.length} chunks`;
+
+    return combined;
+  }
+
+  // ตรวจสอบงบประมาณก่อนเรียก API
+  async checkBudgetBeforeAPI() {
+    try {
+      const costSummary = await this.costTracker.getCostSummary();
+      if (!costSummary) return true;
+
+      const monthlyBudgetTHB = parseFloat(process.env.MONTHLY_BUDGET_THB) || 500;
+      const emergencyBudgetTHB = parseFloat(process.env.EMERGENCY_BUDGET_THB) || 600;
+      
+      const currentCost = costSummary.totalCostTHB || 0;
+      
+      if (currentCost >= emergencyBudgetTHB) {
+        logger.error(`🚨 EMERGENCY: Budget exceeded ${emergencyBudgetTHB} THB, using free models only`);
+        this.budgetExceeded = true;
+        this.switchToFreeMode();
+        return false;
+      } else if (currentCost >= monthlyBudgetTHB) {
+        logger.warn(`⚠️ Monthly budget exceeded, switching to cheaper models`);
+        this.switchToCheaperModels();
+      }
+
+      return true;
+    } catch (error) {
+      logger.warn(`⚠️ Could not check budget: ${error.message}`);
+      return true;
+    }
+  }
+
+  switchToFreeMode() {
+    this.openaiApiKey = 'disabled';
+    process.env.OPENAI_API_KEY = 'disabled';
+    process.env.GEMINI_API_KEY = 'free';
+    logger.info('💡 Switched to free mode only');
+  }
+
+  switchToCheaperModels() {
+    this.openaiModel = 'gpt-3.5-turbo'; // ใช้ model ที่ถูกที่สุด
+    process.env.OPENAI_MODEL = 'gpt-3.5-turbo';
+    process.env.GEMINI_MODEL = 'gemini-1.5-flash';
+    logger.info('💰 Switched to cheaper models');
   }
 
   async testConnection() {
@@ -460,6 +647,17 @@ class NewsAnalysisService {
         });
 
         const content = response.data.choices[0].message.content;
+        
+        // ติดตามค่าใช้จ่าย API แบบ real-time
+        if (response.data.usage) {
+          await this.costTracker.trackAPIUsage(
+            'openai',
+            this.openaiModel,
+            response.data.usage.prompt_tokens || 0,
+            response.data.usage.completion_tokens || 0
+          );
+        }
+        
         const parsedResult = JSON.parse(content);
         
         // เพิ่มข้อมูลราคาและคุณภาพข้อมูล
@@ -577,6 +775,17 @@ class NewsAnalysisService {
         });
 
         const content = response.data.choices[0].message.content;
+        
+        // ติดตามค่าใช้จ่าย API แบบ real-time
+        if (response.data.usage) {
+          await this.costTracker.trackAPIUsage(
+            'openai',
+            this.openaiModel,
+            response.data.usage.prompt_tokens || 0,
+            response.data.usage.completion_tokens || 0
+          );
+        }
+        
         const parsedResult = JSON.parse(content);
         
         // เพิ่มข้อมูลราคาและคุณภาพข้อมูล
@@ -914,6 +1123,17 @@ ${newsTexts}
       });
 
       const content = response.data.choices[0].message.content;
+      
+      // ติดตามค่าใช้จ่าย API แบบ real-time
+      if (response.data.usage) {
+        await this.costTracker.trackAPIUsage(
+          'openai',
+          this.openaiModel,
+          response.data.usage.prompt_tokens || 0,
+          response.data.usage.completion_tokens || 0
+        );
+      }
+      
       return JSON.parse(content);
       
     } catch (error) {
@@ -992,6 +1212,17 @@ ${newsTexts}
       });
 
       const content = response.data.choices[0].message.content;
+      
+      // ติดตามค่าใช้จ่าย API แบบ real-time
+      if (response.data.usage) {
+        await this.costTracker.trackAPIUsage(
+          'openai',
+          this.openaiModel,
+          response.data.usage.prompt_tokens || 0,
+          response.data.usage.completion_tokens || 0
+        );
+      }
+      
       return JSON.parse(content);
       
     } catch (error) {
@@ -1017,6 +1248,245 @@ ${newsTexts}
     }
   }
 
+  /**
+   * Gather comprehensive news data for all stocks
+   * เก็บข้อมูลข่าวสำหรับหุ้นทั้งหมด
+   */
+  async gatherAllStockNews(stocks) {
+    logger.info(`📰 Gathering comprehensive news for ${stocks.length} stocks...`);
+    
+    const allNewsData = [];
+    let processedCount = 0;
+    
+    try {
+      for (const stock of stocks) {
+        try {
+          logger.info(`📊 [${processedCount + 1}/${stocks.length}] Processing ${stock.symbol}...`);
+          
+          // ดึงข้อมูลข่าวแบบครบถ้วน
+          const [financialData, newsResults, sentimentData] = await Promise.all([
+            this.reliableDataService.getFinancialData(stock.symbol, stock.type),
+            this.reliableDataService.getReliableNews(stock.symbol, stock.type),
+            this.reliableDataService.getSocialSentiment(stock.symbol, stock.type)
+          ]);
+          
+          if (newsResults && newsResults.combined && newsResults.combined.length > 0) {
+            const stockNewsData = {
+              stock: {
+                symbol: stock.symbol,
+                type: stock.type,
+                amount: stock.amount,
+                unit: stock.unit,
+                displayName: stock.displayName || stock.symbol
+              },
+              news: {
+                today: newsResults.today || [],
+                yesterday: newsResults.yesterday || [],
+                combined: newsResults.combined || []
+              },
+              totalNews: newsResults.combined.length,
+              todayNews: newsResults.today.length,
+              yesterdayNews: newsResults.yesterday.length,
+              financialData: financialData || null,
+              socialSentiment: sentimentData || null,
+              dataQuality: 'good'
+            };
+            
+            // เพิ่มเฉพาะหุ้นที่มีข่าว
+            if (stockNewsData.totalNews > 0) {
+              allNewsData.push(stockNewsData);
+              logger.info(`✅ ${stock.symbol}: Found ${stockNewsData.totalNews} news items`);
+            } else {
+              logger.info(`ℹ️ ${stock.symbol}: No news found`);
+            }
+          } else {
+            logger.info(`ℹ️ ${stock.symbol}: No news data available`);
+          }
+          
+          processedCount++;
+          
+          // หน่วงเวลาระหว่างการประมวลผล
+          if (processedCount < stocks.length) {
+            await this.delay(1000);
+          }
+          
+        } catch (error) {
+          logger.error(`❌ Error processing ${stock.symbol}: ${error.message}`);
+          processedCount++;
+          continue;
+        }
+      }
+      
+      logger.info(`📊 News gathering complete: ${allNewsData.length}/${stocks.length} stocks have news data`);
+      
+      // Sort by news count (descending)
+      allNewsData.sort((a, b) => b.totalNews - a.totalNews);
+      
+      // Save comprehensive news to output file
+      await this.saveNewsToOutputFile(allNewsData);
+      
+      return allNewsData;
+      
+    } catch (error) {
+      logger.error(`❌ Error gathering all stock news: ${error.message}`);
+      return allNewsData; // Return partial results
+    }
+  }
+
+  /**
+   * แปลข้อความเป็นภาษาไทยด้วย AI
+   */
+  async translateToThai(text) {
+    try {
+      // ใช้ Gemini API แปลภาษา
+      const geminiService = require('./geminiAnalysisService');
+      const gemini = new geminiService();
+      
+      const prompt = `แปลข้อความต่อไปนี้เป็นภาษาไทยที่อ่านแล้วเข้าใจง่าย อย่าแปลชื่อเฉพาะ บริษัท หรือชื่อคน:
+
+"${text}"
+
+ตอบเฉพาะข้อความที่แปลแล้วเท่านั้น ไม่ต้องอธิบาย:`;
+      
+      const result = await gemini.analyzeWithGemini(prompt, { maxTokens: 100 });
+      return result?.analysis || text; // fallback ถ้าแปลไม่ได้
+    } catch (error) {
+      logger.debug(`แปลภาษาไม่สำเร็จ: ${error.message}`);
+      return text; // ใช้ข้อความเดิมถ้าแปลไม่ได้
+    }
+  }
+
+  /**
+   * แปลข้อความเป็นภาษาไทยด้วย AI
+   */
+  async translateToThai(text) {
+    try {
+      // ใช้ Gemini API แปลภาษา
+      const geminiService = require('./geminiAnalysisService');
+      const gemini = new geminiService();
+      
+      const prompt = `แปลข้อความต่อไปนี้เป็นภาษาไทยที่อ่านแล้วเข้าใจง่าย อย่าแปลชื่อเฉพาะ บริษัท หรือชื่อคน:
+
+"${text}"
+
+ตอบเฉพาะข้อความที่แปลแล้วเท่านั้น ไม่ต้องอธิบาย:`;
+      
+      const result = await gemini.analyzeWithGemini(prompt, { maxTokens: 150 });
+      return result?.analysis || text; // fallback ถ้าแปลไม่ได้
+    } catch (error) {
+      logger.debug(`แปลภาษาไม่สำเร็จ: ${error.message}`);
+      return text; // ใช้ข้อความเดิมถ้าแปลไม่ได้
+    }
+  }
+
+  /**
+   * Save comprehensive news data to output-summary.txt file
+   */
+  async saveNewsToOutputFile(allNewsData) {
+    const fs = require('fs').promises;
+    const path = require('path');
+    
+    try {
+      const outputPath = path.join(__dirname, '..', 'data', 'output-summary.txt');
+      const timestamp = new Date().toISOString();
+      const thaiTime = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+      
+      let content = `\n=== รายงานข่าวฉบับสมบูรณ์ - ${timestamp} ===\n`;
+      content += `📰 สรุปข่าวหุ้นทั้งหมด\n\n`;
+      
+      let totalNewsArticles = 0;
+      let stocksWithTodayNews = 0;
+      
+      for (const stockData of allNewsData) {
+        const stock = stockData.stock;
+        content += `🏢 ${stock.symbol}`;
+        if (stock.displayName && stock.displayName !== stock.symbol) {
+          // แปลชื่อบริษัทด้วย AI
+          const thaiName = await this.translateToThai(stock.displayName);
+          content += ` (${thaiName})`;
+        }
+        content += `:\n`;
+        
+        if (stockData.totalNews === 0) {
+          content += `  📭 ไม่มีข่าวล่าสุด\n`;
+        } else {
+          content += `  📊 ข่าวทั้งหมด: ${stockData.totalNews} ข่าว | วันนี้: ${stockData.todayNews} ข่าว | เมื่อวาน: ${stockData.yesterdayNews} ข่าว\n`;
+          
+          if (stockData.todayNews > 0) {
+            stocksWithTodayNews++;
+          }
+          
+          totalNewsArticles += stockData.totalNews;
+          
+          // Show today's news
+          if (stockData.news.today && stockData.news.today.length > 0) {
+            content += `  📰 ข่าววันนี้:\n`;
+            const todayNews = stockData.news.today.slice(0, 3);
+            for (let index = 0; index < todayNews.length; index++) {
+              const news = todayNews[index];
+              let thaiTitle = await this.translateToThai(news.title);
+              content += `    ${index + 1}. ${thaiTitle}\n`;
+              if (news.summary && news.summary.length > 0) {
+                let thaiSummary = await this.translateToThai(news.summary);
+                content += `       📝 ${thaiSummary.substring(0, 150)}...\n`;
+              }
+              // แปลชื่อแหล่งข่าว
+              let thaiSource = this.translateNewsSource(news.source || 'Unknown');
+              content += `       🕐 ${news.publishedDate || 'ไม่ทราบ'} | 📰 ${thaiSource}\n`;
+            }
+          }
+          
+          // Show yesterday's news (if any)
+          if (stockData.news.yesterday && stockData.news.yesterday.length > 0) {
+            content += `  📰 ข่าวเมื่อวานนี้:\n`;
+            for (let i = 0; i < Math.min(2, stockData.news.yesterday.length); i++) {
+              const news = stockData.news.yesterday[i];
+              let thaiTitle = await this.translateToThai(news.title);
+              content += `    ${i + 1}. ${thaiTitle}\n`;
+            }
+          }
+          
+          // Show data quality and sentiment
+          if (stockData.dataQuality) {
+            let thaiQuality = this.translateDataQuality(stockData.dataQuality);
+            content += `  📊 คุณภาพข้อมูล: ${thaiQuality}\n`;
+          }
+          if (stockData.socialSentiment) {
+            let thaiSentiment = this.translateSentiment(stockData.socialSentiment.overallSentiment || 'neutral');
+            content += `  💭 ความรู้สึกตลาด: ${thaiSentiment}\n`;
+          }
+        }
+        content += `\n`;
+      }
+      
+      content += `📊 สถิติสรุป:\n`;
+      content += `   • จำนวนหุ้นที่วิเคราะห์: ${allNewsData.length} ตัว\n`;
+      content += `   • จำนวนข่าวทั้งหมด: ${totalNewsArticles} ข่าว\n`;
+      content += `   • หุ้นที่มีข่าววันนี้: ${stocksWithTodayNews} ตัว\n`;
+      content += `   • เวลาวิเคราะห์: ${thaiTime} (เวลาประเทศไทย)\n`;
+      content += `\n${'='.repeat(80)}\n`;
+      
+      // Append to file (or create if doesn't exist)
+      await fs.appendFile(outputPath, content);
+      
+      logger.info(`💾 Saved comprehensive news report to data/output-summary.txt (${totalNewsArticles} news items from ${allNewsData.length} stocks)`);
+      
+      return {
+        success: true,
+        totalArticles: totalNewsArticles,
+        stocksWithNews: allNewsData.length,
+        stocksWithTodayNews: stocksWithTodayNews
+      };
+      
+    } catch (error) {
+      logger.error(`❌ Failed to save news to output file: ${error.message}`);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
   removeDuplicateNews(news) {
     const seen = new Set();
     return news.filter(item => {
@@ -1027,6 +1497,139 @@ ${newsTexts}
       seen.add(key);
       return true;
     });
+  }
+
+  /**
+   * แปลหัวข้อข่าวเป็นภาษาไทยที่เข้าใจง่าย
+   */
+  translateNewsTitle(title) {
+    if (!title) return 'ไม่มีหัวข้อ';
+    
+    // แปลคำศัพท์สำคัญ
+    let translated = title
+      .replace(/Europe/gi, 'ยุโรป')
+      .replace(/premarket/gi, 'ช่วงพรีมาร์เก็ต')
+      .replace(/Fed/gi, 'ธนาคารกลางสหรัฐ (Fed)')
+      .replace(/focus/gi, 'เน้น')
+      .replace(/Stocks Rally/gi, 'หุ้นพุ่งแรง')
+      .replace(/US/gi, 'สหรัฐฯ')
+      .replace(/China/gi, 'จีน')
+      .replace(/Trade Deal/gi, 'ข้อตกลงการค้า')
+      .replace(/Stock futures/gi, 'ฟิวเจอร์สหุ้น')
+      .replace(/rise/gi, 'ปรับตัวสูงขึ้น')
+      .replace(/optimism/gi, 'การมองโลกในแง่ดี')
+      .replace(/ahead of/gi, 'ก่อน')
+      .replace(/meeting/gi, 'การประชุม')
+      .replace(/market/gi, 'ตลาด')
+      .replace(/earnings/gi, 'ผลประกอบการ')
+      .replace(/double whammy/gi, 'วิกฤตหนักสองต่อ')
+      .replace(/decision/gi, 'การตัดสินใจ')
+      .replace(/collides/gi, 'กระทบ')
+      .replace(/megacap tech/gi, 'บริษัทเทคโนโลยียักษ์ใหญ่')
+      .replace(/watch/gi, 'จับตามอง')
+      .replace(/finances/gi, 'การเงิน')
+      .replace(/Trump-Xi/gi, 'ทรัมป์-สี')
+      .replace(/husband/gi, 'สามี')
+      .replace(/wife/gi, 'ภรรยา')
+      .replace(/woman/gi, 'หญิงสาว')
+      .replace(/keeps.*in the dark/gi, 'ปิดบังความจริง')
+      .replace(/act now/gi, 'รีบลงมือทำเดี๋ยวนี้')
+      .replace(/shut up/gi, 'เงียบปาก');
+    
+    return translated;
+  }
+
+  /**
+   * แปลสรุปข่าวเป็นภาษาไทย
+   */
+  translateNewsSummary(summary) {
+    if (!summary) return '';
+    
+    let translated = summary
+      .replace(/The market/gi, 'ตลาด')
+      .replace(/investors/gi, 'นักลงทุน')
+      .replace(/trading/gi, 'การซื้อขาย')
+      .replace(/prices/gi, 'ราคา')
+      .replace(/volatility/gi, 'ความผันผวน')
+      .replace(/growth/gi, 'การเติบโต')
+      .replace(/analysis/gi, 'การวิเคราะห์')
+      .replace(/report/gi, 'รายงาน')
+      .replace(/continues/gi, 'ยังคง')
+      .replace(/expected/gi, 'คาดการณ์');
+    
+    return translated;
+  }
+
+  /**
+   * แปลชื่อแหล่งข่าวเป็นภาษาไทย
+   */
+  translateNewsSource(source) {
+    if (!source) return 'ไม่ทราบแหล่งที่มา';
+    
+    const sourceMap = {
+      'Reuters': 'รอยเตอร์',
+      'MarketWatch': 'มาร์เก็ตวอทช์',
+      'Yahoo Finance': 'ยาฮู ไฟแนนซ์',
+      'Bloomberg': 'บลูมเบิร์ก',
+      'CNBC': 'ซีเอ็นบีซี',
+      'Financial Times': 'ไฟแนนเชียล ไทมส์',
+      'Wall Street Journal': 'วอลล์สตรีท เจอร์นัล',
+      'Unknown': 'ไม่ทราบ'
+    };
+    
+    return sourceMap[source] || source;
+  }
+
+  /**
+   * แปลคุณภาพข้อมูล
+   */
+  translateDataQuality(quality) {
+    const qualityMap = {
+      'excellent': 'ยอดเยี่ยม',
+      'good': 'ดี',
+      'fair': 'พอใช้',
+      'poor': 'แย่',
+      'unknown': 'ไม่ทราบ'
+    };
+    
+    return qualityMap[quality] || quality;
+  }
+
+  /**
+   * แปลความรู้สึกตลาด
+   */
+  translateSentiment(sentiment) {
+    const sentimentMap = {
+      'positive': 'เชิงบวก',
+      'negative': 'เชิงลบ', 
+      'neutral': 'กลางๆ',
+      'bullish': 'มองดี',
+      'bearish': 'มองแย่',
+      'unknown': 'ไม่ทราบ'
+    };
+    
+    return sentimentMap[sentiment] || sentiment;
+  }
+
+  /**
+   * Check if a date is today (Thailand timezone)
+   */
+  isToday(dateString) {
+    if (!dateString) return false;
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    return dateString.includes(todayStr);
+  }
+
+  /**
+   * Check if a date is yesterday (Thailand timezone)
+   */
+  isYesterday(dateString) {
+    if (!dateString) return false;
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    return dateString.includes(yesterdayStr);
   }
 
   delay(ms) {

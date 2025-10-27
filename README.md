@@ -20,11 +20,21 @@
 - **Automatic Fallback** | **สลับอัตโนมัติ**: ChatGPT → Gemini → Mock responses
 - **Risk Assessment** | **ประเมินความเสี่ยง**: High-risk stock detection with detailed analysis
 - **Opportunity Detection** | **ตรวจหาโอกาส**: Market opportunities identification
+- **Token Management** | **จัดการ Token**: Automatic chunking for large inputs
+- **Budget Control** | **ควบคุมงบประมาณ**: Real-time cost tracking and budget limits
 
-### 📱 LINE Integration | การเชื่อมต่อ LINE
+### � Cost Management | การจัดการค่าใช้จ่าย
+- **Real-time Pricing** | **ราคาปัจจุบัน**: Live API pricing from web sources
+- **Exchange Rate** | **อัตราแลกเปลี่ยน**: Current USD/THB exchange rates
+- **Budget Tracking** | **ติดตามงบประมาณ**: Monthly budget limits with warnings
+- **Cost Reporting** | **รายงานค่าใช้จ่าย**: Detailed session and monthly cost reports
+- **Auto Model Switch** | **สลับโมเดลอัตโนมัติ**: Switch to cheaper/free models when budget exceeded
+
+### �📱 LINE Integration | การเชื่อมต่อ LINE
 - **Real-time Notifications** | **แจ้งเตือนแบบเรียลไทม์**: Instant risk and opportunity alerts
 - **Rich Message Format** | **รูปแบบข้อความสมบูรณ์**: Multiple news sources with clickable links
 - **Interactive Chat** | **แชทโต้ตอบ**: AI-powered chat responses about your portfolio
+- **Cost Reports** | **รายงานค่าใช้จ่าย**: Session cost summary sent to LINE
 
 ### 📊 Multi-Asset Support | รองรับหลายประเภทสินทรัพย์
 - **Stocks** | **หุ้น**: Individual stock analysis
