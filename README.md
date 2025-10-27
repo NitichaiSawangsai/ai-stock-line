@@ -1,445 +1,327 @@
-# AI Stock Risk Notification System | ระบบแจ้งเตือนความเสี่ยงหุ้นด้วย AI
+# 🤖 AI Stock Analysis System / ระบบวิเคราะห์หุ้นด้วย AI
 
-<p align="center">
-  <img src="https://img.shields.io/badge/AI-Free%20100%25-green" alt="Free AI"/>
-  <img src="https://img.shields.io/badge/Node.js-v16+-blue" alt="Node.js"/>
-  <img src="https://img.shields.io/badge/LINE-Official%20Account-00c300" alt="LINE"/>
-  <img src="https://img.shields.io/badge/Google-Gemini%20AI-orange" alt="Gemini AI"/>
-</p>
+## 📊 คำอธิบาย / Description
 
-## 📋 Overview | ภาพรวม
-
-**English:** An intelligent stock portfolio monitoring system that uses free AI services to analyze market risks and opportunities, sending real-time notifications through LINE Official Account. The system supports automatic fallback between multiple AI providers and operates with zero ongoing AI costs.
-
-**ไทย:** ระบบตรวจสอบพอร์ตการลงทุนอัจฉริยะที่ใช้บริการ AI ฟรี 100% ในการวิเคราะห์ความเสี่ยงและโอกาสทางการตลาด พร้อมส่งการแจ้งเตือนแบบเรียลไทม์ผ่าน LINE Official Account ระบบรองรับการสลับ AI อัตโนมัติและไม่มีค่าใช้จ่าย AI
-
-## ✨ Features | ฟีเจอร์
-
-### 🤖 AI-Powered Analysis | การวิเคราะห์ด้วย AI
-- **Free AI Services** | **บริการ AI ฟรี**: Google Gemini AI + Mock responses
-- **Automatic Fallback** | **สลับอัตโนมัติ**: ChatGPT → Gemini → Mock responses
-- **Risk Assessment** | **ประเมินความเสี่ยง**: High-risk stock detection with detailed analysis
-- **Opportunity Detection** | **ตรวจหาโอกาส**: Market opportunities identification
-- **Token Management** | **จัดการ Token**: Automatic chunking for large inputs
-- **Budget Control** | **ควบคุมงบประมาณ**: Real-time cost tracking and budget limits
-
-### � Cost Management | การจัดการค่าใช้จ่าย
-- **Real-time Pricing** | **ราคาปัจจุบัน**: Live API pricing from web sources
-- **Exchange Rate** | **อัตราแลกเปลี่ยน**: Current USD/THB exchange rates
-- **Budget Tracking** | **ติดตามงบประมาณ**: Monthly budget limits with warnings
-- **Cost Reporting** | **รายงานค่าใช้จ่าย**: Detailed session and monthly cost reports
-- **Auto Model Switch** | **สลับโมเดลอัตโนมัติ**: Switch to cheaper/free models when budget exceeded
-
-### �📱 LINE Integration | การเชื่อมต่อ LINE
-- **Real-time Notifications** | **แจ้งเตือนแบบเรียลไทม์**: Instant risk and opportunity alerts
-- **Rich Message Format** | **รูปแบบข้อความสมบูรณ์**: Multiple news sources with clickable links
-- **Interactive Chat** | **แชทโต้ตอบ**: AI-powered chat responses about your portfolio
-- **Cost Reports** | **รายงานค่าใช้จ่าย**: Session cost summary sent to LINE
-
-### 📊 Multi-Asset Support | รองรับหลายประเภทสินทรัพย์
-- **Stocks** | **หุ้น**: Individual stock analysis
-- **Cryptocurrency** | **สกุลเงินดิจิทัล**: Crypto market monitoring
-- **Gold** | **ทอง**: Precious metals tracking
-- **Forex** | **สกุลเงิน**: Currency exchange analysis
-
-### 📈 Data Sources | แหล่งข้อมูล
-- **Google Drive Integration** | **เชื่อมต่อ Google Drive**: Portfolio data from spreadsheets
-- **Multiple News APIs** | **API ข่าวหลากหลาย**: RSS feeds, financial news aggregation
-- **Free Data Sources** | **แหล่งข้อมูลฟรี**: Yahoo Finance, Reuters RSS feeds
-
-## 🚀 Installation | การติดตั้ง
-
-### Prerequisites | ข้อกำหนดเบื้องต้น
+**ภาษาไทย:**
+ระบบวิเคราะห์หุ้นอัตโนมัติที่ใช้ AI เพื่อประเมินความเสี่ยงและโอกาสกำไรของพอร์ตการลงทุน โดยดึงข้อมูลข่าวสารจากอินเทอร์เน็ตแบบเรียลไทม์และส่งผลการวิเคราะห์ผ่าน LINE หรือบันทึกลงไฟล์
 
 **English:**
-- Node.js v16 or higher
-- LINE Official Account
-- Google Drive account (for portfolio data)
-- Google Gemini API key (optional, free tier available)
-
-**ไทย:**
-- Node.js เวอร์ชัน 16 ขึ้นไป
-- LINE Official Account
-- บัญชี Google Drive (สำหรับข้อมูลพอร์ต)
-- Google Gemini API key (ไม่บังคับ มีแผนฟรี)
-
-### Quick Start | เริ่มต้นใช้งาน
-
-```bash
-# Clone repository | โคลนโปรเจค
-git clone https://github.com/NitichaiSawangsai/ai-stock-line.git
-cd ai-stock-line
-
-# Install dependencies | ติดตั้ง dependencies
-npm install
-# or | หรือ
-yarn install
-
-# Copy environment template | คัดลอกไฟล์ environment
-cp .env.example .env
-
-# Edit configuration | แก้ไขการตั้งค่า
-nano .env
-
-# Run development mode | รันโหมดพัฒนา
-npm run dev
-# or | หรือ
-yarn run dev
-
-# Run production | รันแบบ production
-npm start
-# or | หรือ
-yarn start
-```
-
-## ⚙️ Configuration | การตั้งค่า
-
-### Environment Variables | ตัวแปรสภาพแวดล้อม
-
-Create a `.env` file in the root directory with the following configuration:
-
-สร้างไฟล์ `.env` ในโฟลเดอร์หลักพร้อมการตั้งค่าดังนี้:
-
-```env
-# OpenAI ChatGPT API (Optional - ไม่บังคับ)
-OPENAI_API_KEY=disabled  # Set to 'disabled' for free mode | ตั้งเป็น 'disabled' สำหรับโหมดฟรี
-
-# Google Gemini AI (Free - ฟรี)
-GEMINI_API_KEY=your-gemini-api-key-here  # Or 'free' for mock responses | หรือ 'free' สำหรับ mock
-
-# LINE Official Account (Required - จำเป็น)
-LINE_CHANNEL_ACCESS_TOKEN=your-line-access-token
-LINE_CHANNEL_SECRET=your-line-channel-secret
-LINE_USER_ID=your-line-user-id
-
-# Stock Data Source (Required - จำเป็น)
-STOCKS_FILE_URL=https://drive.google.com/uc?id=YOUR-GOOGLE-DRIVE-FILE-ID&export=download
-STOCKS_CONTEXT_URL=your-additional-context-url
-
-# News API (Optional - ไม่บังคับ)
-NEWS_API_KEY=your-news-api-key  # Or 'free' for RSS feeds | หรือ 'free' สำหรับ RSS feeds
-
-# Application Settings (การตั้งค่าแอป)
-NODE_ENV=production
-LOG_LEVEL=info
-```
-
-### Getting API Keys | การขอ API Keys
-
-#### 1. LINE Official Account | บัญชี LINE Official
-
-**English:**
-1. Visit [LINE Developers Console](https://developers.line.biz/)
-2. Create a new channel (Messaging API)
-3. Get Channel Access Token and Channel Secret
-4. Add your LINE User ID (can be found in LINE app settings)
-
-**ไทย:**
-1. เข้าไปที่ [LINE Developers Console](https://developers.line.biz/)
-2. สร้าง channel ใหม่ (Messaging API)
-3. รับ Channel Access Token และ Channel Secret
-4. เพิ่ม LINE User ID ของคุณ (หาได้ในการตั้งค่าแอป LINE)
-
-#### 2. Google Gemini AI (Free) | Google Gemini AI (ฟรี)
-
-**English:**
-1. Visit [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. Sign in with Google account
-3. Create new API key
-4. Copy the key to your `.env` file
-
-**ไทย:**
-1. เข้าไปที่ [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. เข้าสู่ระบบด้วยบัญชี Google
-3. สร้าง API key ใหม่
-4. คัดลอก key ไปใส่ในไฟล์ `.env`
-
-#### 3. Google Drive Portfolio File | ไฟล์พอร์ตใน Google Drive
-
-**English:**
-1. Create a Google Sheets file with your portfolio
-2. Format: Symbol, Type, Amount, Unit (e.g., "AAPL,หุ้น,100,หุ้น")
-3. Share the file publicly or get the file ID
-4. Use the direct download URL format
-
-**ไทย:**
-1. สร้างไฟล์ Google Sheets ที่มีข้อมูลพอร์ตของคุณ
-2. รูปแบบ: Symbol, Type, Amount, Unit (เช่น "AAPL,หุ้น,100,หุ้น")
-3. แชร์ไฟล์แบบสาธารณะ หรือเอา file ID
-4. ใช้ URL ดาวน์โหลดตรง
-
-**Example Portfolio Format | ตัวอย่างรูปแบบพอร์ต:**
-```csv
-ประเภท ชื่อ หน่วยที่ลงทุน
-หุ้น VOO 0.00394415
-ทอง ทอง 1 บาท
-สกุลเงิน USD 100 usb
-สกุลเงินคริปโต BTC 1 btc
-หุ้น NVDA -
-```
-
-## 🧪 Testing | การทดสอบ
-
-### Available Tests | การทดสอบที่มี
-
-```bash
-# Run all tests | รันการทดสอบทั้งหมด
-npm test
-# or | หรือ
-yarn test
-
-# Individual test files | ไฟล์ทดสอบแยก
-node test/quick-test.test-e2e.js          # Quick system test | ทดสอบระบบอย่างรวดเร็ว
-node test/test-download.test-e2e.js       # Data download test | ทดสอบการดาวน์โหลดข้อมูล
-node test/test-line.test-e2e.js           # LINE API test | ทดสอบ LINE API
-node test/test-line-official.test-e2e.js  # LINE Official Account test | ทดสอบ LINE Official Account
-node test/test-openai.test-e2e.js         # OpenAI API test | ทดสอบ OpenAI API
-node test/test-ai-fallback.test-e2e.js    # AI fallback system test | ทดสอบระบบสำรอง AI
-node test/test-gemini-real.test-e2e.js    # Real Gemini API test | ทดสอบ Gemini API จริง
-node test/test-line-format.test-e2e.js    # LINE message format test | ทดสอบรูปแบบข้อความ LINE
-```
-
-### Test Descriptions | คำอธิบายการทดสอบ
-
-| Test File | Purpose (EN) | วัตถุประสงค์ (TH) |
-|-----------|--------------|-------------------|
-| `quick-test` | Fast system health check | ตรวจสุขภาพระบบอย่างรวดเร็ว |
-| `test-download` | Portfolio data retrieval | การดึงข้อมูลพอร์ต |
-| `test-line` | Basic LINE API functionality | ฟังก์ชัน LINE API พื้นฐาน |
-| `test-line-official` | Official account features | ฟีเจอร์บัญชีทางการ |
-| `test-openai` | ChatGPT integration | การเชื่อมต่อ ChatGPT |
-| `test-ai-fallback` | AI service switching | การสลับบริการ AI |
-| `test-gemini-real` | Real Gemini API calls | การเรียก Gemini API จริง |
-| `test-line-format` | Message formatting | การจัดรูปแบบข้อความ |
-
-### Test Requirements | ข้อกำหนดการทดสอบ
-
-**English:**
-- All environment variables must be properly configured
-- Internet connection required for API tests
-- LINE Official Account must be properly set up
-- Google Drive file must be accessible
-
-**ไทย:**
-- ตัวแปรสภาพแวดล้อมทั้งหมดต้องตั้งค่าให้ถูกต้อง
-- ต้องมีอินเทอร์เน็ตสำหรับทดสอบ API
-- LINE Official Account ต้องตั้งค่าให้เรียบร้อย
-- ไฟล์ Google Drive ต้องเข้าถึงได้
-
-## 🔄 Running Modes | โหมดการทำงาน
-
-### Development Mode | โหมดพัฒนา
-```bash
-npm run dev
-# Features: Test all services, detailed logging, one-time execution
-# ฟีเจอร์: ทดสอบบริการทั้งหมด, log รายละเอียด, รันครั้งเดียว
-```
-
-### Production Mode | โหมด Production
-```bash
-npm start
-# Features: Scheduled execution, optimized logging, continuous monitoring
-# ฟีเจอร์: รันตามตาราง, log ที่เพิ่มประสิทธิภาพ, ตรวจสอบต่อเนื่อง
-```
-
-### Webhook Mode | โหมด Webhook
-```bash
-npm run webhook
-# Features: LINE webhook server for interactive chat
-# ฟีเจอร์: เซิร์ฟเวอร์ webhook ของ LINE สำหรับแชทโต้ตอบ
-```
-
-### Cron Setup | ตั้งค่า Cron
-```bash
-npm run setup-cron
-# Features: Automatic cron job installation
-# ฟีเจอร์: ติดตั้งงาน cron อัตโนมัติ
-```
-
-## 📁 Project Structure | โครงสร้างโปรเจค
-
-```
-ai-stock-line/
-├── main.js                 # Main application entry point | จุดเริ่มต้นแอปหลัก
-├── webhook.js              # LINE webhook server | เซิร์ฟเวอร์ webhook ของ LINE
-├── test-runner.js          # Test automation runner | ตัวรันการทดสอบอัตโนมัติ
-├── ecosystem.config.js     # PM2 configuration | การตั้งค่า PM2
-├── package.json            # Dependencies and scripts | Dependencies และ scripts
-├── .env                    # Environment variables | ตัวแปรสภาพแวดล้อม
-├── crontab.example         # Cron job example | ตัวอย่างงาน cron
-├── services/               # Core business logic | ตรรกะธุรกิจหลัก
-│   ├── stockDataService.js        # Portfolio data management | การจัดการข้อมูลพอร์ต
-│   ├── newsAnalysisService.js     # News analysis & AI orchestration | การวิเคราะห์ข่าวและ AI
-│   ├── geminiAnalysisService.js   # Google Gemini AI integration | การเชื่อมต่อ Google Gemini AI
-│   ├── lineNotificationService.js # Basic LINE messaging | การส่งข้อความ LINE พื้นฐาน
-│   ├── lineOfficialAccountService.js # Advanced LINE features | ฟีเจอร์ LINE ขั้นสูง
-│   ├── googleDriveService.js      # Google Drive integration | การเชื่อมต่อ Google Drive
-│   └── schedulerService.js        # Task scheduling | การกำหนดตารางงาน
-├── test/                   # Test files | ไฟล์ทดสอบ
-│   ├── quick-test.test-e2e.js           # Quick system test | ทดสอบระบบอย่างรวดเร็ว
-│   ├── test-download.test-e2e.js        # Data download test | ทดสอบการดาวน์โหลด
-│   ├── test-line.test-e2e.js            # LINE API test | ทดสอบ LINE API
-│   ├── test-line-official.test-e2e.js   # LINE Official test | ทดสอบ LINE Official
-│   ├── test-openai.test-e2e.js          # OpenAI test | ทดสอบ OpenAI
-│   ├── test-ai-fallback.test-e2e.js     # AI fallback test | ทดสอบสำรอง AI
-│   ├── test-gemini-real.test-e2e.js     # Real Gemini test | ทดสอบ Gemini จริง
-│   ├── test-line-format.test-e2e.js     # LINE format test | ทดสอบรูปแบบ LINE
-│   └── data/                            # Test data files | ไฟล์ข้อมูลทดสอบ
-└── logs/                   # Application logs | ล็อกแอปพลิเคชัน
-    └── (auto-generated)    # Automatically created log files | ไฟล์ล็อกที่สร้างอัตโนมัติ
-```
-
-## 🔧 Troubleshooting | การแก้ไขปัญหา
-
-### Common Issues | ปัญหาที่พบบ่อย
-
-#### 1. LINE Connection Failed | การเชื่อมต่อ LINE ล้มเหลว
-
-**English:**
-- Verify LINE_CHANNEL_ACCESS_TOKEN is correct
-- Check LINE_CHANNEL_SECRET matches your channel
-- Ensure LINE_USER_ID is your actual user ID
-- Test with `node test/test-line-official.test-e2e.js`
-
-**ไทย:**
-- ตรวจสอบ LINE_CHANNEL_ACCESS_TOKEN ให้ถูกต้อง
-- เช็ค LINE_CHANNEL_SECRET ให้ตรงกับ channel ของคุณ
-- ตรวจสอบ LINE_USER_ID ให้เป็น user ID จริงของคุณ
-- ทดสอบด้วย `node test/test-line-official.test-e2e.js`
-
-#### 2. Portfolio Data Not Loading | ข้อมูลพอร์ตโหลดไม่ได้
-
-**English:**
-- Check STOCKS_FILE_URL is accessible
-- Verify Google Drive file permissions (public read access)
-- Test with `node test/test-download.test-e2e.js`
-- Ensure CSV format is correct
-
-**ไทย:**
-- ตรวจสอบ STOCKS_FILE_URL เข้าถึงได้
-- ตรวจสอบสิทธิ์ไฟล์ Google Drive (อ่านได้แบบสาธารณะ)
-- ทดสอบด้วย `node test/test-download.test-e2e.js`
-- ตรวจสอบรูปแบบ CSV ให้ถูกต้อง
-
-#### 3. AI Services Not Working | บริการ AI ไม่ทำงาน
-
-**English:**
-- For Gemini: Check API key at [Google AI Studio](https://makersuite.google.com/app/apikey)
-- Set GEMINI_API_KEY=free for mock responses
-- Test with `node test/test-ai-fallback.test-e2e.js`
-- All AI services have automatic fallbacks
-
-**ไทย:**
-- สำหรับ Gemini: ตรวจสอบ API key ที่ [Google AI Studio](https://makersuite.google.com/app/apikey)
-- ตั้ง GEMINI_API_KEY=free สำหรับ mock responses
-- ทดสอบด้วย `node test/test-ai-fallback.test-e2e.js`
-- บริการ AI ทั้งหมดมีระบบสำรองอัตโนมัติ
-
-### Debug Mode | โหมดแก้ไขจุดบกพร่อง
-
-```bash
-# Enable detailed logging | เปิดใช้งาน log รายละเอียด
-LOG_LEVEL=debug npm run dev
-
-# Test specific component | ทดสอบส่วนประกอบเฉพาะ
-node test/quick-test.test-e2e.js
-
-# Check system health | ตรวจสอบสุขภาพระบบ
-npm run dev
-```
-
-## 🔒 Security Notes | หมายเหตุความปลอดภัย
-
-**English:**
-- Keep API keys secure and never commit them to version control
-- Use environment variables for all sensitive data
-- Regularly rotate API keys
-- Monitor API usage and costs
-- Set up proper firewall rules for webhook endpoints
-
-**ไทย:**
-- เก็บ API keys ให้ปลอดภัยและไม่เคย commit ลง version control
-- ใช้ตัวแปรสภาพแวดล้อมสำหรับข้อมูลที่ละเอียดอ่อนทั้งหมด
-- หมุนเวียน API keys เป็นประจำ
-- ตรวจสอบการใช้งาน API และค่าใช้จ่าย
-- ตั้งค่า firewall ให้ถูกต้องสำหรับ webhook endpoints
-
-## 💰 Cost Information | ข้อมูลค่าใช้จ่าย
-
-### Free Tier Usage | การใช้งานแผนฟรี
-
-| Service | Free Limit | Cost After Limit |
-|---------|------------|------------------|
-| Google Gemini | 15 RPM, 100 RPD | $0.00025/1K tokens |
-| LINE Official | 1,000 messages/month | $0.003/message |
-| News APIs | RSS feeds (unlimited) | N/A |
-
-**Note:** This system is designed to operate within free tiers. Monitor usage to avoid unexpected charges.
-
-**หมายเหตุ:** ระบบนี้ออกแบบให้ทำงานในแผนฟรี ตรวจสอบการใช้งานเพื่อหลีกเลี่ยงค่าใช้จ่ายที่ไม่คาดคิด
-
-## 🤝 Contributing | การมีส่วนร่วม
-
-**English:**
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-**ไทย:**
-1. Fork repository
-2. สร้าง feature branch
-3. เพิ่มการทดสอบสำหรับฟังก์ชันใหม่
-4. ตรวจสอบให้การทดสอบทั้งหมดผ่าน
-5. ส่ง pull request
-
-## 📄 License | ลิขสิทธิ์
-
-MIT License - feel free to use this project for personal or commercial purposes.
-
-MIT License - สามารถใช้โปรเจคนี้เพื่อการใช้งานส่วนตัวหรือเชิงพาณิชย์ได้
-
-## 📞 Support | การสนับสนุน
-
-**English:**
-- Create an issue on GitHub for bugs or feature requests
-- Check the test files for usage examples
-- Review the troubleshooting section above
-
-**ไทย:**
-- สร้าง issue บน GitHub สำหรับบั๊กหรือการขอฟีเจอร์
-- ดูไฟล์ทดสอบสำหรับตัวอย่างการใช้งาน
-- อ่านส่วนการแก้ไขปัญหาข้างต้น
+An automated stock analysis system powered by AI to assess investment portfolio risks and opportunities. It fetches real-time news from the internet and delivers analysis results via LINE or saves to files.
 
 ---
 
-## 🚀 Quick Start Example | ตัวอย่างการเริ่มต้นอย่างรวดเร็ว
+## ✨ ความสามารถหลัก / Key Features
 
+### 🔍 การวิเคราะห์ข้อมูล / Data Analysis
+- **ดาวน์โหลดข้อมูลหุ้น** / Download stock data from Google Drive
+- **ค้นหาข่าวแบบเรียลไทม์** / Real-time news search from Google & News API
+- **การวิเคราะห์ด้วย AI** / AI-powered analysis using Google Gemini or OpenAI
+- **ประเมินความเสี่ยง** / Risk assessment (1-10 scale)
+- **คาดการณ์โอกาสกำไร** / Profit opportunity prediction (1-10 scale)
+
+### 🌐 แหล่งข้อมูลข่าว / News Sources
+- **เศรษฐกิจโลก** / Global economy (IMF, Fed)
+- **ภูมิรัฐศาสตร์** / Geopolitics (Russia-Ukraine, Middle East)
+- **ตลาดหุ้น** / Stock markets (SET, S&P 500)
+- **สกุลเงิน** / Currencies (USD/THB, JPY)
+- **คริปโต** / Cryptocurrency (Bitcoin)
+- **ทองคำ** / Gold prices
+
+### 💬 การส่งผลลัพธ์ / Result Delivery
+- **LINE Messaging** / LINE notification system
+- **File Backup** / Automatic file backup when LINE fails
+- **Beautiful Logging** / Colorful console logs with timestamps
+- **Cost Tracking** / API usage and cost monitoring
+
+### 💰 การจัดการค่าใช้จ่าย / Cost Management
+- **Google Search Quota** / 100 free searches/day, $5 per 1,000 additional
+- **Gemini API** / Free tier available
+- **Exchange Rate** / Real-time USD/THB conversion
+- **Usage Tracking** / Daily and monthly cost tracking
+
+---
+
+## 🚀 การติดตั้ง / Installation
+
+### ข้อกำหนดระบบ / Requirements
+- **Node.js** >= 16.0.0
+- **npm** or **yarn**
+- Internet connection for news APIs
+
+### 1. ดาวน์โหลดโปรเจ็กต์ / Download Project
 ```bash
-# 1. Clone and install | โคลนและติดตั้ง
-git clone https://github.com/NitichaiSawangsai/ai-stock-line.git
+git clone https://github.com/your-username/ai-stock-line.git
 cd ai-stock-line
-npm install
-
-# 2. Copy environment file | คัดลอกไฟล์ environment
-cp .env.example .env
-
-# 3. Edit .env with your keys | แก้ไข .env ด้วย keys ของคุณ
-# LINE_CHANNEL_ACCESS_TOKEN=your-token
-# LINE_CHANNEL_SECRET=your-secret
-# LINE_USER_ID=your-user-id
-# STOCKS_FILE_URL=your-google-drive-url
-
-# 4. Test the system | ทดสอบระบบ
-npm test
-
-# 5. Run development mode | รันโหมดพัฒนา
-npm run dev
-
-# 6. Check LINE for notifications! | ตรวจสอบ LINE สำหรับการแจ้งเตือน!
 ```
 
-**Success! Your AI stock monitoring system is now running with zero ongoing costs! 🎉**
+### 2. ติดตั้ง Dependencies / Install Dependencies
+```bash
+# Using npm
+npm install
 
-**สำเร็จ! ระบบตรวจสอบหุ้น AI ของคุณกำลังทำงานโดยไม่มีค่าใช้จ่ายต่อเนื่อง! 🎉**
+# Using yarn  
+yarn install
+```
+
+### 3. ตั้งค่า Environment Variables / Setup Environment Variables
+สร้างไฟล์ `.env` และใส่ค่าต่อไปนี้ / Create `.env` file with the following:
+
+```env
+# OpenAI ChatGPT API Configuration (DISABLED - ใช้เฉพาะฟรี)
+OPENAI_API_KEY=disabled
+# Alternative models: gpt-4, gpt-4-turbo, gpt-3.5-turbo-16k
+OPENAI_MODEL={model}
+
+# Get free API key from: https://makersuite.google.com/app/apikey
+# GEMINI_API_KEY=free OR GEMINI_API_KEY={key}
+GEMINI_API_KEY={key}
+# Alternative models: gemini-2.5-pro, gemini-2.5-flash, gemini-flash-latest
+GEMINI_MODEL=gemini-2.5-flash
+
+
+# Google Custom Search API - Get free API key from: https://developers.google.com/custom-search/v1/introduction
+GOOGLE_SEARCH_API_KEY={key}
+# Get free API key from: https://programmablesearchengine.google.com/controlpanel/create/congrats?cx=0187433d021784ee8
+GOOGLE_SEARCH_ENGINE_ID={key}
+# Google Search API Quota Management
+GOOGLE_SEARCH_DAILY_LIMIT=200
+# News API - Get free API key from: https://newsapi.org/
+NEWS_API_KEY={key}
+
+
+# LINE Official Account Configuration
+# Get free API key from: https://developers.line.biz/console/channel/2008360697/messaging-api
+LINE_CHANNEL_ACCESS_TOKEN={key}
+# https://developers.line.biz/console/channel/2008360697/basics
+LINE_CHANNEL_SECRET={key}
+LINE_USER_ID={key}
+
+# Stock Data Configuration
+# ได้จากการแชร์ลิงก์ Google Drive เช่น https://drive.google.com/file/d/16kznopNPffyk6jKC8P1tuH-l2hV/view?usp=drive_link
+# ก็จะได้ https://drive.google.com/uc?id={id}&export=download เช่น https://drive.google.com/uc?id=16kznopNPffyk6jKC8P1tuH-l2hV&export=download
+STOCK_DATA_URL={url}
+
+
+# Application Configuration
+NODE_ENV=production
+LOG_LEVEL=info
+
+# Cost Management Configuration
+MONTHLY_COST_LIMIT_THB=100
+
+# Retry Configuration (การตั้งค่าลองใหม่)
+RETRY_MAX_ATTEMPTS=2
+TIMEOUT_END_APP_MS=900000 # 15 minutes
+```
+
+### 4. ขั้นตอนการรับ API Keys / How to Get API Keys
+
+#### 🔑 Google Gemini API (ฟรี / Free)
+1. ไปที่ / Visit: https://makersuite.google.com/app/apikey
+2. สร้าง API key ใหม่ / Create new API key
+3. คัดลอกและใส่ใน `GEMINI_API_KEY`
+
+#### 🔍 Google Search API (ฟรี 100 ครั้ง/วัน / Free 100 searches/day)
+1. ไปที่ / Visit: https://developers.google.com/custom-search/v1/introduction
+2. สร้าง Custom Search Engine: https://programmablesearchengine.google.com/
+3. รับ API Key และ Engine ID
+
+#### 📰 News API (ฟรี / Free tier)
+1. ไปที่ / Visit: https://newsapi.org/register
+2. สมัครสมาชิกฟรี / Sign up for free
+3. รับ API key
+
+#### 💬 LINE Official Account (ไม่บังคับ / Optional)
+1. ไปที่ / Visit: https://developers.line.biz/
+2. สร้าง Official Account
+3. รับ Channel Access Token และ Channel Secret
+
+---
+
+## 🏃‍♂️ การใช้งาน / Usage
+
+### เรียกใช้ระบบ / Run the System
+```bash
+# Using npm
+npm start
+
+# Using yarn
+yarn start
+```
+
+### ผลลัพธ์ที่ได้ / Expected Output
+```
+============================== Stock Analysis App ==============================
+[27/10/2568 17:27:09] ✅ Google Search API เปิดใช้งาน (เหลือ 182/200 คำค้น)
+[27/10/2568 17:27:09] 💰 ค่าใช้จ่ายวันนี้: 0.00 บาท, เดือนนี้: 0.00 บาท
+[27/10/2568 17:27:09] ✅ News API เปิดใช้งาน
+
+🚀 เริ่มต้น: ดาวน์โหลดข้อมูลหุ้น
+🔍 เริ่มค้นหาข่าวจากอินเทอร์เน็ต...
+🤖 เลือกใช้: GeminiService (Gemini API พร้อมใช้งาน)
+✅ การวิเคราะห์เสร็จสิ้น
+```
+
+---
+
+## 📁 โครงสร้างโปรเจ็กต์ / Project Structure
+
+```
+ai-stock-line/
+├── main.js                    # Entry point
+├── package.json               # Dependencies
+├── .env                       # Environment variables
+├── README.md                  # Documentation
+├── data/                      # Data storage
+│   ├── text-sum.txt          # Analysis results
+│   ├── google_search_quota.json    # Search quota tracking
+│   ├── google_search_costs.json    # Cost tracking
+│   └── cost-tracking.json    # AI API costs
+├── services/                  # Core services
+│   ├── aiAnalysisService.js  # AI analysis orchestration
+│   ├── costTracker.js        # Cost management
+│   ├── geminiService.js      # Google Gemini integration
+│   ├── logger.js             # Beautiful logging
+│   ├── messageService.js     # LINE messaging
+│   ├── openaiService.js      # OpenAI integration
+│   ├── retryManager.js       # Error handling
+│   ├── stockDataService.js   # Stock data processing
+│   └── webSearchService.js   # News search
+├── logs/                     # Log files
+└── test/                     # Test files
+```
+
+---
+
+## 📊 ตัวอย่างผลลัพธ์ / Sample Output
+
+```
+📊 ข่าวสำคัญ:
+• IMF World Economic Outlook, October 2025: "Global Economy in Flux"
+• สงครามรัสเซีย-ยูเครนยังคงดำเนินอยู่
+
+📈 ผลกระทบต่อหุ้น:
+• ความเสี่ยง: 7/10 (ค่อนข้างสูง)
+• โอกาสกำไร: 5/10 (ปานกลาง)
+
+💡 คำแนะนำ:
+• กระจายความเสี่ยง
+• ติดตามข่าวสารอย่างใกล้ชิด
+• พิจารณาทองคำเป็นสินทรัพย์ปลอดภัย
+
+💰 สรุปค่าใช้จ่าย:
+🔍 Google Search: 27/200 คำค้น (ฟรี 27/100)
+💰 AI API: $0.0002 (0.01 บาท)
+💱 อัตราแลกเปลี่ยน: 1 USD = 32.71 THB
+```
+
+---
+
+## ⚙️ การกำหนดค่า / Configuration
+
+### ปรับแต่งการค้นหาข่าว / Customize News Search
+แก้ไขใน `services/webSearchService.js`:
+```javascript
+const queries = [
+    'Thailand economy GDP inflation',
+    'Your custom search terms'
+];
+```
+
+### ปรับระดับความเสี่ยง / Adjust Risk Levels
+แก้ไขใน `services/aiAnalysisService.js` prompt template
+
+### จำกัด Cost / Cost Limits
+แก้ไขใน `.env`:
+```env
+MONTHLY_COST_LIMIT_THB=100
+GOOGLE_SEARCH_DAILY_LIMIT=200
+```
+
+---
+
+## 🔧 การแก้ไขปัญหา / Troubleshooting
+
+### ปัญหาทั่วไป / Common Issues
+
+**1. API Key ไม่ทำงาน / API Key Not Working**
+```bash
+# ตรวจสอบ API key
+echo $GEMINI_API_KEY
+```
+
+**2. ไม่สามารถดาวน์โหลดข้อมูลหุ้น / Cannot Download Stock Data**
+- ตรวจสอบ `STOCK_DATA_URL` ใน `.env`
+- ให้แน่ใจว่า Google Drive file เป็น public
+
+**3. LINE ส่งข้อความไม่ได้ / LINE Cannot Send Messages**
+- ระบบจะบันทึกลงไฟล์ `data/text-sum.txt` อัตโนมัติ
+- ตรวจสอบ quota ของ LINE API
+
+**4. Google Search เกิน Quota / Google Search Quota Exceeded**
+- ระบบจะหยุดค้นหาอัตโนมัติเมื่อเกิน 200 คำค้น/วัน
+- Quota จะ reset ในวันใหม่ (เที่ยงคืน)
+
+---
+
+## 🛡️ ความปลอดภัย / Security
+
+### การปกป้อง API Keys / Protecting API Keys
+- **ไม่แชร์ไฟล์ `.env`** / Never share `.env` file
+- **ใช้ environment variables** / Use environment variables in production
+- **จำกัด permissions** / Limit API key permissions
+
+### การจัดการ Quota / Quota Management  
+- **Google Search**: ฟรี 100 คำค้น/วัน / Free 100 searches/day
+- **Gemini API**: ฟรี tier มีจำกัด / Free tier has limits
+- **ระบบจะหยุดอัตโนมัติ** / System stops automatically when quota exceeded
+
+---
+
+## 📈 การพัฒนาต่อ / Future Development
+
+### ฟีเจอร์ที่วางแผน / Planned Features
+- [ ] Web dashboard interface
+- [ ] Multiple portfolio support  
+- [ ] Technical analysis integration
+- [ ] Mobile app notifications
+- [ ] Machine learning price prediction
+- [ ] Real-time alerts
+- [ ] Multi-language support
+
+### การมีส่วนร่วม / Contributing
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/new-feature`
+3. Commit changes: `git commit -m 'Add new feature'`
+4. Push to branch: `git push origin feature/new-feature`
+5. Submit Pull Request
+
+---
+
+## 📄 License
+
+MIT License - ดูรายละเอียดใน LICENSE file
+
+---
+
+## 🙏 ขอบคุณ / Acknowledgments
+
+- **Google Gemini** for free AI API
+- **Google Custom Search** for news data
+- **News API** for global news
+- **LINE Developers** for messaging platform
+- **OpenAI** for alternative AI option
+
+---
+
+## 📞 ติดต่อ / Contact
+
+- **GitHub**: [Repository Issues](https://github.com/your-username/ai-stock-line/issues)
+- **Email**: your-email@example.com
+
+---
+
+**⚠️ คำเตือน / Disclaimer:**
+ระบบนี้เป็นเครื่องมือช่วยวิเคราะห์เท่านั้น ไม่ใช่คำแนะนำการลงทุน กรุณาศึกษาและประเมินความเสี่ยงด้วยตนเองก่อนตัดสินใจลงทุน
+
+This system is for analysis purposes only and not financial advice. Please conduct your own research and risk assessment before making investment decisions.

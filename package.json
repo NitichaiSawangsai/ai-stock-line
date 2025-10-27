@@ -5,10 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
-    "dev": "node main.js --dev",
-    "webhook": "node webhook.js",
-    "test": "node test-runner.js",
-    "setup-cron": "node main.js --setup-cron"
+    "test": "node test-runner.js"
   },
   "keywords": [
     "stock",
