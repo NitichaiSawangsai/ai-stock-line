@@ -590,7 +590,223 @@ class WebSearchService {
         };
     }
 
-    // ดึงข้อมูลราคาจาก Yahoo Finance API (ทางเลือก)
+    // ค้นหาข่าวและราคาเฉพาะแต่ละหุ้น
+    async searchStockSpecificNews(stockList) {
+        logger.process('🔍 ค้นหาข่าวและราคาเฉพาะแต่ละหุ้น...');
+        
+        const stockAnalysis = [];
+        
+        for (const stock of stockList) {
+            if (!stock.symbol || stock.symbol === '-') continue;
+            
+            try {
+                // ค้นหาข่าวเฉพาะหุ้น
+                const newsQueries = [
+                    `${stock.symbol} stock news today`,
+                    `${stock.symbol} financial results earnings`,
+                    `${stock.symbol} bankruptcy liquidation risk`,
+                    `${stock.symbol} company news update`
+                ];
+                
+                const stockNews = [];
+                for (const query of newsQueries) {
+                    const googleResults = await this.searchGoogle(query, 2); // ลดจำนวนเพื่อประหยัด quota
+                    stockNews.push(...googleResults);
+                    
+                    // พักเล็กน้อยเพื่อป้องกัน rate limit
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                // ดึงราคาหุ้นปัจจุบันและย้อนหลัง
+                const priceData = await this.getStockPriceHistory(stock.symbol);
+                
+                // วิเคราะห์ความเสี่ยงและโอกาสกำไร
+                const analysis = await this.analyzeStockRiskAndOpportunity(stock, priceData, stockNews);
+                
+                stockAnalysis.push({
+                    symbol: stock.symbol,
+                    type: stock.type,
+                    amount: stock.amount,
+                    purchasePrice: stock.purchasePrice,
+                    currentPrice: priceData.currentPrice,
+                    priceHistory: priceData.history,
+                    news: this.removeDuplicates(stockNews).slice(0, 5), // เก็บข่าวสำคัญ 5 ข่าว
+                    analysis: analysis
+                });
+                
+                logger.success(`วิเคราะห์ ${stock.symbol} เสร็จสิ้น`);
+                
+            } catch (error) {
+                logger.warn(`ไม่สามารถวิเคราะห์ ${stock.symbol}: ${error.message}`);
+                
+                // เพิ่มข้อมูลพื้นฐานแม้ว่าจะไม่สามารถดึงข้อมูลได้
+                stockAnalysis.push({
+                    symbol: stock.symbol,
+                    type: stock.type,
+                    amount: stock.amount,
+                    purchasePrice: stock.purchasePrice,
+                    currentPrice: null,
+                    priceHistory: [],
+                    news: [],
+                    analysis: {
+                        riskLevel: 'N/A',
+                        profitOpportunity: 'N/A',
+                        bankruptcyRisk: 'ไม่สามารถตรวจสอบได้',
+                        recommendation: 'ไม่มีข้อมูลเพียงพอ'
+                    }
+                });
+            }
+        }
+        
+        logger.success(`วิเคราะห์หุ้นเสร็จสิ้น: ${stockAnalysis.length} ตัว`);
+        return stockAnalysis;
+    }
+    
+    // ดึงข้อมูลราคาหุ้นปัจจุบันและประวัติราคา
+    async getStockPriceHistory(symbol) {
+        try {
+            // ใช้ Yahoo Finance API หรือ Alpha Vantage API
+            const response = await axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`, {
+                timeout: 10000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+            
+            if (response.data.chart?.result?.[0]) {
+                const result = response.data.chart.result[0];
+                const meta = result.meta;
+                const timestamps = result.timestamp || [];
+                const prices = result.indicators?.quote?.[0]?.close || [];
+                
+                // สร้างประวัติราคา 3-4 วันล่าสุด
+                const history = [];
+                const last4Days = Math.min(4, timestamps.length);
+                
+                for (let i = timestamps.length - last4Days; i < timestamps.length; i++) {
+                    if (timestamps[i] && prices[i]) {
+                        const date = new Date(timestamps[i] * 1000);
+                        history.push({
+                            date: date.toLocaleDateString('th-TH'),
+                            price: prices[i].toFixed(2),
+                            change: i > 0 && prices[i-1] ? 
+                                ((prices[i] - prices[i-1]) / prices[i-1] * 100).toFixed(2) : '0.00'
+                        });
+                    }
+                }
+                
+                return {
+                    currentPrice: meta.regularMarketPrice?.toFixed(2) || 'N/A',
+                    previousClose: meta.previousClose?.toFixed(2) || 'N/A',
+                    changePercent: meta.regularMarketPrice && meta.previousClose ? 
+                        (((meta.regularMarketPrice - meta.previousClose) / meta.previousClose) * 100).toFixed(2) : '0.00',
+                    currency: meta.currency || 'USD',
+                    history: history
+                };
+            }
+            
+            return {
+                currentPrice: 'N/A',
+                previousClose: 'N/A', 
+                changePercent: '0.00',
+                currency: 'USD',
+                history: []
+            };
+            
+        } catch (error) {
+            logger.warn(`ไม่สามารถดึงราคา ${symbol}: ${error.message}`);
+            return {
+                currentPrice: 'N/A',
+                previousClose: 'N/A',
+                changePercent: '0.00', 
+                currency: 'USD',
+                history: []
+            };
+        }
+    }
+    
+    // วิเคราะห์ความเสี่ยงและโอกาสกำไรของหุ้น
+    async analyzeStockRiskAndOpportunity(stock, priceData, news) {
+        // วิเคราะห์ความเสี่ยงจากราคาและข่าว
+        let riskLevel = 5; // เริ่มต้นที่ปานกลาง
+        let profitOpportunity = 5;
+        let bankruptcyRisk = 'ต่ำ'; // ต่ำ/ปานกลาง/สูง
+        
+        // วิเคราะห์จากการเปลี่ยนแปลงราคา
+        if (priceData.history.length > 0) {
+            const recentChanges = priceData.history.map(h => parseFloat(h.change));
+            const avgChange = recentChanges.reduce((a, b) => a + b, 0) / recentChanges.length;
+            
+            if (avgChange < -5) {
+                riskLevel += 2; // ราคาลดมาก = เสี่ยงสูง
+                profitOpportunity -= 2;
+            } else if (avgChange > 5) {
+                riskLevel -= 1; // ราคาขึ้นมาก = โอกาสดี
+                profitOpportunity += 2;
+            }
+        }
+        
+        // วิเคราะห์จากข่าว
+        if (news.length > 0) {
+            const newsText = news.map(n => `${n.title} ${n.snippet}`).join(' ').toLowerCase();
+            
+            // คำที่บ่งบอกควาัมเสี่ยง
+            const riskKeywords = ['bankruptcy', 'liquidation', 'debt', 'loss', 'decline', 'lawsuit', 'investigation', 'ล้มละลาย', 'ขาดทุน', 'ปิดตัว'];
+            const opportunityKeywords = ['profit', 'growth', 'expansion', 'acquisition', 'earnings beat', 'dividend', 'กำไร', 'ขยายตัว', 'เติบโต'];
+            const bankruptcyKeywords = ['bankruptcy', 'liquidation', 'closure', 'shut down', 'insolvent', 'ล้มละลาย', 'ปิดตัว', 'เงินศูนย์'];
+            
+            // นับคำที่พบ
+            const riskCount = riskKeywords.filter(keyword => newsText.includes(keyword)).length;
+            const opportunityCount = opportunityKeywords.filter(keyword => newsText.includes(keyword)).length;
+            const bankruptcyCount = bankruptcyKeywords.filter(keyword => newsText.includes(keyword)).length;
+            
+            riskLevel += riskCount * 2;
+            profitOpportunity += opportunityCount * 2;
+            profitOpportunity -= riskCount;
+            
+            if (bankruptcyCount > 0) {
+                bankruptcyRisk = 'สูง';
+                riskLevel = Math.min(10, riskLevel + 3);
+            } else if (riskCount > 2) {
+                bankruptcyRisk = 'ปานกลาง';
+            }
+        }
+        
+        // จำกัดค่าในช่วง 1-10
+        riskLevel = Math.max(1, Math.min(10, riskLevel));
+        profitOpportunity = Math.max(1, Math.min(10, profitOpportunity));
+        
+        // คำนวณกำไร/ขาดทุนจากราคาชื้อ
+        let currentReturn = 'N/A';
+        if (stock.purchasePrice && stock.purchasePrice !== '-' && priceData.currentPrice && priceData.currentPrice !== 'N/A') {
+            const purchasePrice = parseFloat(stock.purchasePrice);
+            const currentPrice = parseFloat(priceData.currentPrice);
+            currentReturn = (((currentPrice - purchasePrice) / purchasePrice) * 100).toFixed(2) + '%';
+        }
+        
+        return {
+            riskLevel: riskLevel,
+            profitOpportunity: profitOpportunity,
+            bankruptcyRisk: bankruptcyRisk,
+            currentReturn: currentReturn,
+            recommendation: this.generateRecommendation(riskLevel, profitOpportunity, bankruptcyRisk)
+        };
+    }
+    
+    // สร้างคำแนะนำ
+    generateRecommendation(riskLevel, profitOpportunity, bankruptcyRisk) {
+        if (bankruptcyRisk === 'สูง') {
+            return 'ขายทันที - ความเสี่ยงล้มละลายสูง';
+        } else if (riskLevel >= 8) {
+            return 'ไม่แนะนำให้ซื้อเพิ่ม - ความเสี่ยงสูงมาก';
+        } else if (riskLevel <= 3 && profitOpportunity >= 7) {
+            return 'แนะนำให้ซื้อเพิ่ม - โอกาสกำไรดี';
+        } else if (profitOpportunity >= 6) {
+            return 'พิจารณาซื้อเพิ่ม - โอกาสปานกลาง';
+        } else {
+            return 'ถือต่อไปก่อน - ความเสี่ยงและโอกาสปานกลาง';
+        }
+    }
     async getMarketData(symbol) {
         try {
             logger.api(`ดึงข้อมูลราคา: ${symbol}`);

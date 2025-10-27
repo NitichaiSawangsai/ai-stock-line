@@ -49,19 +49,33 @@ class StockDataService {
                     continue;
                 }
                 
-                // Parse each line - expected format: ประเภท ชื่อ จำนวนหุ้นที่ถืออยู่ [ราคาที่ซื้อ]
+                // Parse each line - expected format: ประเภท ชื่อ จำนวนหุ้นที่ถืออยู่ ราคาที่ซื้อ ระยะเวลาจะลงทุน แอพที่เทรดหุ้น
                 const parts = line.trim().split(/\s+/);
                 if (parts.length >= 3) {
                     const type = parts[0];
                     const symbol = parts[1];
                     const amount = parts[2];
                     const purchasePrice = parts.length > 3 ? parts[3] : '-';
+                    const investmentPeriod = parts.length > 4 ? parts[4] + ' ' + (parts[5] || '') : '-';
+                    
+                    // ดึงแอพเทรดจากส่วนท้าย (อาจมี quotes)
+                    let tradingApp = '-';
+                    if (parts.length >= 6) {
+                        const quotedParts = line.match(/"([^"]+)"/);
+                        if (quotedParts) {
+                            tradingApp = quotedParts[1];
+                        } else if (parts.length > 5) {
+                            tradingApp = parts.slice(5).join(' ');
+                        }
+                    }
                     
                     stockList.push({
                         type: type,
                         symbol: symbol,
                         amount: amount,
                         purchasePrice: purchasePrice,
+                        investmentPeriod: investmentPeriod,
+                        tradingApp: tradingApp,
                         originalLine: line.trim()
                     });
                 }
@@ -82,13 +96,13 @@ class StockDataService {
         for (const stock of stockList) {
             if (stock.amount !== '-' && stock.purchasePrice !== '-') {
                 // Has both amount and price
-                formattedList += `${stock.type} ${stock.symbol} ${stock.amount} ${stock.purchasePrice}\n`;
+                formattedList += `${stock.type} ${stock.symbol} ${stock.amount} ${stock.purchasePrice} ${stock.investmentPeriod || '20 ปี'} ${stock.tradingApp || '-'}\n`;
             } else if (stock.amount !== '-') {
                 // Has amount but no price
-                formattedList += `${stock.type} ${stock.symbol} ${stock.amount} -\n`;
+                formattedList += `${stock.type} ${stock.symbol} ${stock.amount} - ${stock.investmentPeriod || '20 ปี'} ${stock.tradingApp || '-'}\n`;
             } else {
                 // No amount or price
-                formattedList += `${stock.type} ${stock.symbol} - -\n`;
+                formattedList += `${stock.type} ${stock.symbol} - - ${stock.investmentPeriod || '20 ปี'} ${stock.tradingApp || '-'}\n`;
             }
         }
         
