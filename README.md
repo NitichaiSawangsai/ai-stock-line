@@ -316,8 +316,8 @@ MIT License - ดูรายละเอียดใน LICENSE file
 
 ## 📞 ติดต่อ / Contact
 
-- **GitHub**: [Repository Issues](https://github.com/your-username/ai-stock-line/issues)
-- **Email**: your-email@example.com
+- **GitHub**: [Repository Issues](https://github.com/NitichaiSawangsai/ai-stock-line/issues)
+- **Email**: NitichaiSawangsai@gmail.com
 
 ---
 
