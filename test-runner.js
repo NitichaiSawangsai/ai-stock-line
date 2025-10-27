@@ -24,7 +24,7 @@ class TestRunner {
         try {
             const files = fs.readdirSync(this.testDir);
             this.testFiles = files
-                .filter(file => file.endsWith('.test-e2e.js'))
+                .filter(file => file.endsWith('.test.js'))
                 .map(file => path.join(this.testDir, file));
             
             console.log(`🔍 Discovered ${this.testFiles.length} test files:`);

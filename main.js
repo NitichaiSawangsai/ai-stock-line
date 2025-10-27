@@ -1,305 +1,229 @@
 require('dotenv').config();
-const cron = require('node-cron');
-const moment = require('moment-timezone');
-const winston = require('winston');
 const StockDataService = require('./services/stockDataService');
-const NewsAnalysisService = require('./services/newsAnalysisService');
-const LineOfficialAccountService = require('./services/lineOfficialAccountService');
-const SchedulerService = require('./services/schedulerService');
+const AIAnalysisService = require('./services/aiAnalysisService');
+const { MessageService } = require('./services/messageService');
+const { RetryManager, TimeoutManager } = require('./services/retryManager');
+const logger = require('./services/logger');
 
-// Configure logger
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.printf(({ timestamp, level, message }) => {
-      return `${timestamp} [${level.toUpperCase()}]: ${message}`;
-    })
-  ),
-  transports: [
-    new winston.transports.Console(),
-    new winston.transports.File({ filename: 'logs/app.log' })
-  ]
-});
+class StockAnalysisApp {
+    constructor() {
+        // Load configuration from environment
+        this.config = {
+            // OpenAI Configuration
+            openaiApiKey: process.env.OPENAI_API_KEY,
+            openaiModel: process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
+            
+            // Gemini Configuration
+            geminiApiKey: process.env.GEMINI_API_KEY,
+            geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+            
+            // Web Search Configuration
+            googleSearchApiKey: process.env.GOOGLE_SEARCH_API_KEY,
+            googleSearchEngineId: process.env.GOOGLE_SEARCH_ENGINE_ID,
+            googleSearchDailyLimit: parseInt(process.env.GOOGLE_SEARCH_DAILY_LIMIT) || 200,
+            googleSearchFreeDaily: parseInt(process.env.GOOGLE_SEARCH_FREE_DAILY) || 100,
+            googleSearchCostPer1000: parseFloat(process.env.GOOGLE_SEARCH_COST_PER_1000?.replace('$', '')) || 5,
+            newsApiKey: process.env.NEWS_API_KEY,
+            
+            // LINE Configuration
+            lineChannelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+            lineChannelSecret: process.env.LINE_CHANNEL_SECRET,
+            lineUserId: process.env.LINE_USER_ID,
+            
+            // Stock Data Configuration
+            stockDataUrl: process.env.STOCK_DATA_URL,
+            
+            // App Configuration
+            monthlyCostLimit: parseFloat(process.env.MONTHLY_COST_LIMIT_THB) || 100,
+            retryMaxAttempts: parseInt(process.env.RETRY_MAX_ATTEMPTS) || 3,
+            timeoutEndApp: parseInt(process.env.TIMEOUT_END_APP_MS) || 1800000, // 30 minutes
+            
+            // Environment
+            nodeEnv: process.env.NODE_ENV || 'development',
+            logLevel: process.env.LOG_LEVEL || 'info'
+        };
 
-class StockNotificationApp {
-  constructor() {
-    this.isRunning = false;
-    this.startTime = null;
-    this.timeout = 30 * 60 * 1000; // 30 minutes timeout
-    this.stockData = new StockDataService();
-    this.newsAnalysis = new NewsAnalysisService();
-    this.lineNotification = new LineOfficialAccountService();
-    this.scheduler = new SchedulerService();
-  }
+        // Initialize services
+        this.stockDataService = new StockDataService(this.config.stockDataUrl);
+        this.aiAnalysisService = new AIAnalysisService(this.config);
+        this.messageService = new MessageService({
+            channelAccessToken: this.config.lineChannelAccessToken,
+            channelSecret: this.config.lineChannelSecret,
+            userId: this.config.lineUserId
+        });
 
-  async start() {
-    const timeoutId = setTimeout(() => {
-      logger.error('⏰ Process timeout reached (30 minutes), forcing exit...');
-      process.exit(1);
-    }, this.timeout);
-
-    try {
-      this.startTime = Date.now();
-      this.isRunning = true;
-      
-      logger.info('🚀 Stock Notification System Starting...');
-      
-      // Check if this is a scheduled run or manual run
-      const args = process.argv.slice(2);
-      const runType = args.includes('--risk') ? 'risk' : 
-                     args.includes('--opportunity') ? 'opportunity' : 
-                     args.includes('--dev') ? 'dev' : 'full';
-
-      switch (runType) {
-        case 'risk':
-          await this.checkHighRiskStocks();
-          break;
-        case 'opportunity':
-          await this.checkStockOpportunities();
-          break;
-        case 'dev':
-          await this.runDevelopmentMode();
-          break;
-        default:
-          await this.runFullCheck();
-      }
-
-      clearTimeout(timeoutId);
-      this.gracefulExit(0);
-      
-    } catch (error) {
-      clearTimeout(timeoutId);
-      logger.error(`❌ Application error: ${error.message}`);
-      
-      // Try to send error notification but don't wait if it fails
-      try {
-        await Promise.race([
-          this.lineNotification.sendErrorNotification(error),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Notification timeout')), 5000))
-        ]);
-      } catch (notifyError) {
-        logger.warn(`⚠️ Failed to send error notification: ${notifyError.message}`);
-      }
-      
-      this.forceExit(1);
+        // Initialize managers
+        this.retryManager = new RetryManager(this.config.retryMaxAttempts);
+        this.timeoutManager = new TimeoutManager(this.config.timeoutEndApp);
     }
-  }
 
-  async runFullCheck() {
-    logger.info('🔍 Running full stock analysis...');
-    
-    try {
-      // Load stock list from Stock Data Service
-      const stocks = await this.stockData.getStockList();
-      
-      if (!stocks || stocks.length === 0) {
-        logger.warn('⚠️ No stocks found in the list');
-        return;
-      }
+    validateConfiguration() {
+        const requiredFields = [
+            'stockDataUrl',
+            'lineChannelAccessToken',
+            'lineChannelSecret',
+            'lineUserId'
+        ];
 
-      logger.info(`📊 Found ${stocks.length} stocks to analyze`);
-
-      // Check for high-risk stocks
-      const highRiskStocks = await this.newsAnalysis.analyzeHighRiskStocks(stocks);
-      if (highRiskStocks.length > 0) {
-        await this.lineNotification.sendRiskAlert(highRiskStocks);
-      }
-
-      // Check for opportunities (only during morning hours)
-      const currentHour = moment().tz('Asia/Bangkok').hour();
-      if (currentHour >= 5 && currentHour <= 7) {
-        const opportunities = await this.newsAnalysis.analyzeStockOpportunities(stocks);
-        if (opportunities.length > 0) {
-          await this.lineNotification.sendOpportunityAlert(opportunities);
+        const missingFields = requiredFields.filter(field => !this.config[field]);
+        
+        if (missingFields.length > 0) {
+            throw new Error(`Missing required configuration: ${missingFields.join(', ')}`);
         }
-      }
 
-    } catch (error) {
-      logger.error(`💥 Error in full check: ${error.message}`);
-      throw error;
+        // Check if at least one AI service is configured
+        const hasOpenAI = this.config.openaiApiKey && this.config.openaiApiKey !== 'disabled';
+        const hasGemini = this.config.geminiApiKey;
+        
+        if (!hasOpenAI && !hasGemini) {
+            logger.warn('ไม่มี AI API Key ที่ใช้งานได้ จะใช้โหมดฟรี');
+        }
+
+        logger.success('ตรวจสอบการตั้งค่าเรียบร้อย');
     }
-  }
 
-  async checkHighRiskStocks() {
-    logger.info('🚨 Checking for high-risk stocks...');
-    
-    try {
-      const stocks = await this.stockData.getStockList();
-      const highRiskStocks = await this.newsAnalysis.analyzeHighRiskStocks(stocks);
-      
-      if (highRiskStocks.length > 0) {
-        await this.lineNotification.sendRiskAlert(highRiskStocks);
-        logger.info(`🚨 Sent risk alert for ${highRiskStocks.length} stocks`);
-      } else {
-        logger.info('✅ No high-risk stocks found');
-      }
-      
-    } catch (error) {
-      logger.error(`💥 Error checking high-risk stocks: ${error.message}`);
-      throw error;
+    async downloadAndParseStockData() {
+        logger.startOperation('ดาวน์โหลดข้อมูลหุ้น');
+        
+        const result = await this.retryManager.executeWithRetryAndTimeout(
+            async () => {
+                this.timeoutManager.checkTimeout();
+                return await this.stockDataService.getFormattedStockData();
+            },
+            60000, // 1 minute timeout for download
+            'ดาวน์โหลดข้อมูลหุ้น'
+        );
+
+        logger.finishOperation(`ดาวน์โหลดและประมวลผลข้อมูลหุ้น (${result.stockList.length} รายการ)`);
+        return result;
     }
-  }
 
-  async checkStockOpportunities() {
-    logger.info('🔥 Checking for stock opportunities...');
-    
-    try {
-      const stocks = await this.stockData.getStockList();
-      const opportunities = await this.newsAnalysis.analyzeStockOpportunities(stocks);
-      
-      if (opportunities.length > 0) {
-        await this.lineNotification.sendOpportunityAlert(opportunities);
-        logger.info(`🔥 Sent opportunity alert for ${opportunities.length} stocks`);
-      } else {
-        logger.info('✅ No opportunities found');
-      }
-      
-    } catch (error) {
-      logger.error(`💥 Error checking opportunities: ${error.message}`);
-      throw error;
+    async generateAIAnalysis(stockData) {
+        logger.startOperation('การวิเคราะห์ด้วย AI');
+        
+        const analysis = await this.retryManager.executeWithRetryAndTimeout(
+            async () => {
+                this.timeoutManager.checkTimeout();
+                return await this.aiAnalysisService.generateAnalysis(
+                    stockData.formattedData, 
+                    this.config.monthlyCostLimit
+                );
+            },
+            300000, // 5 minutes timeout for AI analysis
+            'การวิเคราะห์ด้วย AI'
+        );
+
+        logger.finishOperation('การวิเคราะห์ด้วย AI');
+        return analysis;
     }
-  }
 
-  async runDevelopmentMode() {
-    logger.info('🔧 Running in development mode...');
-    
-    // Test all services
-    await this.testServices();
-    
-    // Run a quick analysis
-    await this.runFullCheck();
-  }
+    async sendAnalysisResults(analysisContent) {
+        logger.startOperation('การส่งผลการวิเคราะห์');
+        
+        const result = await this.retryManager.executeWithRetry(
+            async () => {
+                this.timeoutManager.checkTimeout();
+                return await this.messageService.sendAnalysisResult(analysisContent);
+            },
+            'ส่งผลการวิเคราะห์'
+        );
 
-  async testServices() {
-    logger.info('🧪 Testing all services...');
-    
-    let hasErrors = false;
-    
-    // Test Stock Data service with timeout
-    try {
-      await Promise.race([
-        this.stockData.testConnection(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Stock data test timeout')), 10000))
-      ]);
-      logger.info('✅ Stock data service OK');
-    } catch (error) {
-      logger.error(`❌ Stock data service failed: ${error.message}`);
-      hasErrors = true;
+        logger.finishOperation(`ส่งผลการวิเคราะห์ (วิธี: ${result.method})`);
+        return result;
     }
-    
-    // Test ChatGPT API with timeout (non-blocking in dev mode)
-    try {
-      await Promise.race([
-        this.newsAnalysis.testConnection(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('ChatGPT test timeout')), 10000))
-      ]);
-      logger.info('✅ ChatGPT API service OK');
-    } catch (error) {
-      logger.error(`❌ ChatGPT API service failed: ${error.message}`);
-      logger.warn('⚠️ Continuing without ChatGPT for development mode...');
-      // Don't throw error in dev mode for ChatGPT failures
+
+    async sendCostSummary() {
+        logger.startOperation('การส่งสรุปค่าใช้จ่าย');
+        
+        const costSummary = await this.aiAnalysisService.generateCostSummary();
+        
+        const result = await this.retryManager.executeWithRetry(
+            async () => {
+                this.timeoutManager.checkTimeout();
+                return await this.messageService.sendCostSummary(costSummary);
+            },
+            'ส่งสรุปค่าใช้จ่าย'
+        );
+
+        logger.finishOperation(`ส่งสรุปค่าใช้จ่าย (วิธี: ${result.method})`);
+        return result;
     }
-    
-    // Test LINE notification with timeout
-    try {
-      await Promise.race([
-        this.lineNotification.testConnection(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('LINE test timeout')), 10000))
-      ]);
-      logger.info('✅ LINE notification service OK');
-    } catch (error) {
-      logger.error(`❌ LINE notification service failed: ${error.message}`);
-      hasErrors = true;
+
+    async run() {
+        const startTime = Date.now();
+        logger.header('Stock Analysis App');
+        logger.info(`กำหนดเวลาสูงสุด: ${this.config.timeoutEndApp / 60000} นาที`);
+        
+        try {
+            // Step 1: Validate configuration
+            this.validateConfiguration();
+            
+            // Step 2: Clear previous results
+            await this.messageService.clearPreviousResults();
+            
+            // Step 3: Download and parse stock data
+            const stockData = await this.downloadAndParseStockData();
+            console.log(`⏱️  เวลาผ่านไป: ${this.timeoutManager.formatElapsedTime()}`);
+            
+            // Step 4: Generate AI analysis
+            const analysis = await this.generateAIAnalysis(stockData);
+            console.log(`⏱️  เวลาผ่านไป: ${this.timeoutManager.formatElapsedTime()}`);
+            
+            // Step 5: Send analysis results
+            await this.sendAnalysisResults(analysis.content);
+            console.log(`⏱️  เวลาผ่านไป: ${this.timeoutManager.formatElapsedTime()}`);
+            
+            // Step 6: Send cost summary
+            await this.sendCostSummary();
+            console.log(`⏱️  เวลาผ่านไป: ${this.timeoutManager.formatElapsedTime()}`);
+            
+            // Final success message
+            const totalTime = Date.now() - startTime;
+            logger.success(`การทำงานเสร็จสิ้นสมบูรณ์! ใช้เวลารวม: ${Math.round(totalTime / 1000)} วินาที`);
+            
+            return {
+                success: true,
+                duration: totalTime,
+                stockCount: stockData.stockList.length,
+                analysisLength: analysis.content.length
+            };
+
+        } catch (error) {
+            const totalTime = Date.now() - startTime;
+            logger.error(`เกิดข้อผิดพลาดร้ายแรง: ${error.message}`);
+            logger.time(`เวลาที่ใช้ก่อนล้มเหลว: ${Math.round(totalTime / 1000)} วินาที`);
+            
+            // Try to send error notification
+            try {
+                const errorMessage = `❌ Stock Analysis Error\n\nเวลา: ${new Date().toLocaleString('th-TH')}\nข้อผิดพลาด: ${error.message}\nระยะเวลา: ${Math.round(totalTime / 1000)} วินาที`;
+                await this.messageService.sendCostSummary(errorMessage);
+            } catch (notificationError) {
+                logger.error('ไม่สามารถส่งแจ้งเตือนข้อผิดพลาดได้', notificationError.message);
+            }
+            
+            throw error;
+        }
     }
-    
-    // Only throw error if critical services failed (not ChatGPT in dev mode)
-    if (hasErrors) {
-      throw new Error('Critical services failed');
-    }
-  }
-
-  setupCronJobs() {
-    logger.info('⏰ Setting up cron jobs...');
-    
-    // High-risk check every hour
-    cron.schedule('0 * * * *', async () => {
-      logger.info('🕐 Running hourly high-risk check...');
-      try {
-        await this.checkHighRiskStocks();
-      } catch (error) {
-        logger.error(`❌ Hourly check failed: ${error.message}`);
-        await this.lineNotification.sendErrorNotification(error);
-      }
-    }, {
-      timezone: 'Asia/Bangkok'
-    });
-
-    // Opportunity check at 6:10 AM Bangkok time
-    cron.schedule('10 6 * * *', async () => {
-      logger.info('🌅 Running morning opportunity check...');
-      try {
-        await this.checkStockOpportunities();
-      } catch (error) {
-        logger.error(`❌ Morning check failed: ${error.message}`);
-        await this.lineNotification.sendErrorNotification(error);
-      }
-    }, {
-      timezone: 'Asia/Bangkok'
-    });
-
-    logger.info('✅ Cron jobs configured successfully');
-  }
-
-  gracefulExit(code = 0) {
-    this.isRunning = false;
-    const duration = Date.now() - this.startTime;
-    logger.info(`🏁 Process completed in ${Math.round(duration / 1000)}s, exiting with code ${code}`);
-    process.exit(code);
-  }
-
-  forceExit(code = 1) {
-    this.isRunning = false;
-    const duration = this.startTime ? Date.now() - this.startTime : 0;
-    logger.error(`🛑 Force exiting after ${Math.round(duration / 1000)}s with code ${code}`);
-    
-    // Force exit immediately
-    setTimeout(() => {
-      process.exit(code);
-    }, 100);
-  }
 }
 
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  logger.info('🛑 Received SIGINT, shutting down gracefully...');
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  logger.info('🛑 Received SIGTERM, shutting down gracefully...');
-  process.exit(0);
-});
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logger.error(`💥 Uncaught Exception: ${error.message}`);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error(`💥 Unhandled Rejection at: ${promise}, reason: ${reason}`);
-  process.exit(1);
-});
-
-// Start the application
-const app = new StockNotificationApp();
-
-// Check if we're running as a one-time job or setting up cron
-const args = process.argv.slice(2);
-if (args.includes('--setup-cron')) {
-  app.setupCronJobs();
-  logger.info('🔄 Cron jobs running... Press Ctrl+C to stop');
-} else {
-  app.start();
+// Main execution
+async function main() {
+    const app = new StockAnalysisApp();
+    
+    try {
+        const result = await app.run();
+        logger.success('ผลลัพธ์การทำงาน', result);
+        process.exit(0);
+        
+    } catch (error) {
+        logger.error('การทำงานล้มเหลว', error.message);
+        process.exit(1);
+    }
 }
+
+// Run only if this file is executed directly
+if (require.main === module) {
+    main();
+}
+
+module.exports = StockAnalysisApp;
